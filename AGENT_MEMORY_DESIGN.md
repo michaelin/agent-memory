@@ -1,7 +1,10 @@
 # Agent Memory Design: Persistent Obsidian-Based Knowledge Store
 
-*Analysis of requirements, prior art, and recommended design for extending the
-OpenCode multi-agent system with out-of-repo persistent memory.*
+*Analysis of requirements, prior art, and recommended design for an
+out-of-repo persistent memory layer shared across coding agents and
+frameworks. The system is intentionally agent-agnostic: any framework or
+role can read and write the vault, with the sole exception of the
+Librarian, which is the one role this design defines.*
 
 **Status:** Design complete. All open questions resolved. Ready for implementation.
 
@@ -9,17 +12,12 @@ OpenCode multi-agent system with out-of-repo persistent memory.*
 
 ## 1. Why This Matters — Context from Your Current Setup
 
-Your system is designed to be stateless between sessions. Every agent file
-has a "Context reset recovery" section precisely because continuity is
-currently a problem. What agents learn in one session dies when the session
-ends. The only persistence today is:
-
-- `.qrspi/{feature-name}/` artifacts (per-feature, per-repo)
-- `openspec/specs/` canonical specs (per-repo)
-- `docs/adr/` accepted decisions (per-repo)
-
-None of these survive across **projects**, and none of them record the
-informal, hard-won knowledge that accumulates during development: "that
+Coding agents are typically stateless between sessions. What an agent
+learns in one session dies when the session ends. Whatever per-repo
+persistence exists — process artifacts, specs, decision records — is
+bounded by the repo it lives in. None of it survives across **projects**,
+and none of it records the informal, hard-won knowledge that accumulates
+during development: "that
 pattern turned out to be a bad idea", "the security team always flags X",
 "this codebase's `context.go` is the entry point for everything".
 
@@ -46,7 +44,7 @@ Working from your architecture, here is what a memory system must satisfy:
 | **Obsidian-compatible markdown** | Enables human browsing, editing, and curation without any special tooling. Wiki-links and tags let you navigate the graph. |
 | **Atomic short notes** | Each note encodes one fact, one pattern, or one decision. Atomic notes are easier to validate, update, and deprecate. |
 | **Machine-readable frontmatter** | Agents need to filter by project, status, confidence, and date without reading every file. |
-| **Multi-agent write safety** | Your Research Lead runs 3 analysts in parallel. They must not create conflicting or redundant notes without a reconciliation step. |
+| **Multi-agent write safety** | Multiple agents (often running in parallel) must not create conflicting or redundant notes without a reconciliation step. |
 | **Cross-project patterns** | A pattern discovered in project A should be retrievable when starting project B. |
 | **Human curatable** | You must be able to browse, dispute, correct, and prune the vault in Obsidian directly. |
 | **Tool-agnostic accessible** | Any agent framework on the same machine (OpenCode, pi, future tools) must be able to discover and use the same vault without per-tool configuration. |
@@ -74,10 +72,10 @@ it is — and why simpler approaches fail.
 
 ### 3.1 Epistemology — not all knowledge is equal
 
-The system distinguishes five **epistemic types**: observation, pattern,
-constraint, decision, assumption. This is not taxonomy for its own sake.
-Each type carries a different claim about how the knowledge was produced
-and how much it should be trusted.
+The system distinguishes six **epistemic types**: observation, pattern,
+constraint, decision, assumption, synthesis. This is not taxonomy for its
+own sake. Each type carries a different claim about how the knowledge was
+produced and how much it should be trusted.
 
 An **observation** is a direct read of the codebase — something an agent
 saw. A **pattern** is an inference from multiple observations — something
@@ -85,13 +83,16 @@ an agent concluded. A **constraint** is an external imposition — something
 the system must respect regardless of what agents prefer. A **decision** is
 a deliberate choice made by a human — it has authority, not just evidence.
 An **assumption** is a belief held without verification — it is explicitly
-marked as unreliable.
+marked as unreliable. A **synthesis** is a living entity or concept page
+that compounds many atomic notes into a single navigable surface — it is
+derived, not ground truth, and is owned by the Librarian.
 
 The governance rules (TTL, promotion path, human confirmation requirements)
 flow directly from these distinctions. Assumptions expire in 30 days because
 they are unreliable by definition. Decisions require human confirmation
 because they cannot be derived by agents. Observations auto-promote because
-the codebase is the ground truth — a wrong observation fails fast.
+the codebase is the ground truth — a wrong observation fails fast. Synthesis
+pages have no TTL because they are regenerable from their contributing notes.
 
 This is applied epistemology: the system encodes *how you know what you
 know*, not just *what you know*.
@@ -221,7 +222,7 @@ structure are the direct inspiration for this design.
 | TTL / `review-by` dates with staleness scanning | ❌ No concept of note expiry or staleness |
 | `_inbox/` staging with auto-promotion logic | ❌ Writes directly to vault; no staging layer |
 | `_contested/` area for contradictions | ❌ No conflict detection or contested staging |
-| `confidence` field tied to Research Lead quorum | ❌ No confidence scoring |
+| `confidence` field tied to upstream quorum | ❌ No confidence scoring |
 | MCP access from OpenCode | ❌ Blocked until OpenCode gains native MCP support |
 
 **Bottom line:** Use Basic Memory's vault format and `NOTE-FORMAT.md` as the
@@ -347,25 +348,31 @@ constraints it should respect, and repeat mistakes it has made before. The
 solution is to inject a small, targeted summary of relevant knowledge at the
 start of every session — before the agent does any work.
 
-**The concept:** At session start, the agent loads two things:
+**The concept:** At session start, the agent makes a single tool call
+(`memory-context`) that returns four things in one bundled payload:
 1. **Core knowledge** — the writing protocol and a one-line-per-constraint
-   summary of all active constraints. This is always loaded, unconditionally.
+   summary of all active constraints. Always loaded, unconditionally.
    Target size: under 600 tokens combined.
-2. **Index notes** — lightweight navigation files listing what knowledge exists
-   for the current project and relevant domains. These are loaded by name, not
-   by search. Target size: under 300 tokens each.
+2. **Index notes** — lightweight navigation files listing what knowledge
+   exists for the current project and relevant domains. Loaded by name,
+   not by search. Target size: under 300 tokens each.
+3. **Staleness list** — notes where `review-by < today`, surfaced before
+   work begins so the agent knows what may no longer be trustworthy.
+4. **Recent log tail** — the last ~20 entries from `_meta/log.md`, giving
+   the agent a cheap window onto what has changed in the vault since the
+   last session.
 
-The agent does not load full note bodies at session start. It loads the index,
-then fetches specific notes on demand during work. This is the critical
-discipline that prevents context rot: the session starts lean and grows only
-as needed.
+The agent does not load full note bodies at session start. It loads the
+bundle, then fetches specific notes on demand during work. This is the
+critical discipline that prevents context rot: the session starts lean and
+grows only as needed.
 
 **Harness-agnostic implementation (baseline):**
-The agent's definition file (system prompt) instructs it to run the
-`memory-read` `session-init` workflow as the first action of every session,
-before any other tool call. This relies on the model following instructions
-reliably — which well-prompted models do consistently. It is the correct
-default for any framework.
+The agent's definition file (system prompt) instructs it to call the
+`memory-context` tool as the first action of every session, before any
+other tool call. This relies on the model following instructions reliably
+— which well-prompted models do consistently. It is the correct default
+for any framework.
 
 **Harness-specific enhancements:**
 Some frameworks provide hook mechanisms that fire automatically at defined
@@ -378,7 +385,7 @@ These are enhancements, not requirements:
 | **Claude Code** | `user-prompt-submit` hook | Inject top semantic matches from the vault into every prompt (requires a local search process) |
 | **Claude Code** | `session-end` hook | Trigger the Librarian's auto-promotion pass after each session |
 | **OpenCode** | No hook API currently | Rely on agent instruction baseline |
-| **Cursor / Windsurf** | Rules files (`.cursorrules`, etc.) | Include a memory-read instruction in the rules file |
+| **Cursor / Windsurf** | Rules files (`.cursorrules`, etc.) | Include a `memory-context` instruction in the rules file |
 | **Copilot CLI** | No hook API | Rely on agent instruction baseline |
 
 **Recommendation:** Implement the agent-instruction baseline first. It works
@@ -428,16 +435,19 @@ updated: 2026-04-24
 ```
 
 **Size discipline:** An index note for a mature domain should fit in 300
-tokens. If it grows beyond that, the Librarian splits it into sub-indices by
-subtopic. The human can also create or edit index notes directly in Obsidian.
+tokens. Indices are regenerated from frontmatter scans by `memory-reindex`
+(§9); they are not hand-curated. If an index grows beyond budget, the split
+into sub-indices is configured in `memory-reindex` rules, not done
+manually. The human can also create or edit index notes directly in
+Obsidian — `memory-reindex` preserves human additions in a marked section.
 
-**Orphan detection:** Notes in `notes/` that are not referenced from any index
-are invisible to session-start loading. The Librarian periodically checks for
-orphans and adds them to the appropriate index, or flags them to the human if
-the right index is unclear.
+**Orphan detection:** Notes in `notes/` that are not referenced from any
+index are reported by `lint-vault --orphans`. `memory-reindex` adds them
+to the appropriate index automatically when the domain/project tags make
+the target unambiguous; otherwise they are surfaced for human triage.
 
-**Harness-agnostic:** Index files are plain markdown. Any agent that can read
-a file can use them. No framework-specific features required.
+**Harness-agnostic:** Index files are plain markdown. Any agent that can
+read a file can use them. No framework-specific features required.
 
 ---
 
@@ -466,12 +476,14 @@ committing to Phase 2 cost.
 `authentication` and `authz`. This prevents missed results from inconsistent
 tagging across notes written by different agents.
 
-**Harness-agnostic:** Both phases use `grep` and file reads — standard
-filesystem operations available in any agent framework with bash access.
+**Harness-agnostic:** Both phases run inside the `memory-search` binary,
+which an agent invokes as a single tool call. The binary uses standard
+filesystem operations internally; the agent never runs raw `grep` and
+never has to compose Phase 1 / Phase 2 logic in prompt.
 
 ---
 
-### 4.4 Memory consolidation *(future development)*
+### 4.4 Memory consolidation
 
 **The problem:** Over time, the vault accumulates redundancy. Multiple
 observation notes may describe the same fact from slightly different angles.
@@ -479,45 +491,34 @@ Index notes grow stale as notes are added without updating them. Empty or
 trivial notes from early sessions persist and add noise. The vault gradually
 becomes harder to navigate and more expensive to search.
 
-**The concept:** Periodic consolidation is a housekeeping pass over the entire
-vault, distinct from the Librarian's per-note curation work. Where
-`memory-curate` handles individual high-stakes notes at promotion time,
-consolidation handles the vault as a whole on a scheduled basis.
+**What is already covered by static tooling (§9):**
 
-A consolidation pass would:
-1. **Remove empty and trivial notes** — notes with no body content, or notes
-   whose entire content is already captured in another note
-2. **Merge duplicate observations** — two notes making the same claim are
-   merged into one, with both source references preserved
-3. **Identify pattern candidates** — scan `_inbox/` and `notes/` for
-   `observation` notes that share tags and make related claims; propose
-   `pattern` note creation when 2+ corroborating observations are found
-4. **Update index notes** — ensure every promoted note appears in the
-   appropriate index; remove references to deprecated or superseded notes
-5. **Resolve stale open threads** — find notes with `status: inbox` whose
-   `review-by` date has passed and either auto-promote or flag for human review
-6. **Add cross-references** — identify notes that reference the same entities
-   and suggest `[[links]]` between them
+| Consolidation concern | Tool that handles it |
+|---|---|
+| Update index notes; remove deprecated/superseded references | `memory-reindex` |
+| Resolve stale `_inbox/` items past TTL | `memory-promote` (auto-promote on TTL) and `lint-vault --stale` |
+| Identify pattern candidates from corroborating observations | `memory-suggest-patterns` (clusters; Librarian drafts) |
+| Detect notes not referenced from any index | `lint-vault --orphans` |
+| Detect deprecated notes lacking a forward link | `lint-vault --deprecated-no-link` |
 
-**Why this is future development, not initial scope:**
-Consolidation requires the vault to have accumulated enough content to make
-the housekeeping meaningful. Running it on an empty or sparse vault adds
-complexity with no benefit. The correct sequence is: build the vault, use it
-for several months, then add consolidation once the noise problem is real
-rather than theoretical.
+**What remains as future development:**
 
-Consolidation also requires careful design of the Librarian's judgment rules
-for merging and pattern promotion — rules that are best derived from observing
-how the vault actually grows in practice, not specified upfront.
+1. **Remove empty and trivial notes** — detection of notes whose entire
+   content is already captured in another note. Requires semantic
+   judgment beyond what the current similarity check provides.
+2. **Merge duplicate observations** — two notes making the same claim
+   merged into one with both source references preserved. Requires the
+   same semantic judgment plus a deterministic merge format.
+3. **Add cross-references** — suggest `[[links]]` between notes that
+   reference the same entities but do not currently link.
 
-**Harness-agnostic:** Consolidation is a Librarian workflow using grep, file
-reads, and file writes. No framework-specific features required. It could also
-be triggered by a cron job or a scheduled task outside any agent framework,
-invoking the Librarian with a `consolidate` instruction.
-
+These remaining items are best designed after observing how the vault
+grows in practice. They will likely become additional flags on existing
+binaries (e.g. `memory-reindex --suggest-merges`, `lint-vault
+--missing-links`) rather than a new top-level pass.
 ---
 
-### 4.5 The dreaming / pattern promotion mechanism *(future development)*
+### 4.5 The dreaming / pattern promotion mechanism
 
 **The problem:** Individual observations accumulate in the vault but the
 system has no automatic way to notice when multiple observations are
@@ -526,36 +527,30 @@ spot this, but agents working on individual tasks will not.
 
 **The concept:** Inspired by OpenClaw's "dreaming" process, this is a
 background pass that reads recent observations, scores them for recurrence,
-and proposes `pattern` note creation when the evidence threshold is met.
+and surfaces `pattern` note candidates when the evidence threshold is met.
 
-The process:
+In this design, the deterministic half of dreaming ships as
+`memory-suggest-patterns` (§9):
+
 1. Scan `notes/` and `_inbox/` for `observation` notes added in the last N
-   days (configurable; default 30)
-2. Group observations by shared tags and domain
-3. Within each group, identify observations that make related or overlapping
-   claims (by title similarity and tag overlap — no vector search required
-   for a first implementation)
-4. For any group with 2+ observations that appear to corroborate the same
-   claim, draft a proposed `pattern` note and write it to `_inbox/` with
-   `epistemic-type: pattern`, linking the source observations as evidence
-5. Surface the proposed patterns to the human or Librarian for review before
-   promotion
+   days (configurable; default 30).
+2. Group observations by shared tags and domain.
+3. Within each group, identify observations whose titles and tag sets
+   overlap above a threshold (no vector search required).
+4. Emit groups of 2+ corroborating observations as a JSON candidate list.
 
-**Why this is future development, not initial scope:**
-Pattern promotion requires enough observations to be meaningful. It also
-requires tuning the similarity threshold — too aggressive and it creates
-spurious patterns; too conservative and it never fires. Like consolidation,
-this is best designed after observing how the vault grows in practice.
+The tool stops there. **Drafting the actual `pattern` note from a candidate
+cluster requires LLM judgment** and is the Librarian's job: it reviews the
+cluster, writes a `pattern` note via `memory-write`, and the standard
+promotion path takes over. The split keeps the deterministic clustering
+cheap and reproducible while reserving LLM tokens for the part that
+genuinely needs them.
 
-The initial design already handles the manual version of this: agents are
-instructed to write `pattern` notes when they observe 2+ corroborating
-instances. The dreaming mechanism automates the detection step for cases
-where the corroborating observations were written by different agents in
-different sessions and no single agent had visibility of both.
-
-**Harness-agnostic:** The dreaming pass is a Librarian workflow. It could
-run on demand, on a schedule, or be triggered by the consolidation pass.
-No framework-specific features required.
+**Why the threshold tuning is deferred:** Too aggressive and the tool
+emits spurious candidates; too conservative and it never fires. Tuning is
+best done after observing how the vault grows in practice. The first
+shipped version uses simple tag-overlap counts; refinement is a
+post-launch concern.
 
 ---
 
@@ -563,6 +558,36 @@ No framework-specific features required.
 
 This design borrows from Basic Memory (vault format), MemGPT (memory tiers),
 and the Obsidian community (hygiene patterns). The governance layer is original.
+
+### 5.0 Static-tooling principle
+
+The single most important factoring rule of this design:
+
+> **The tool owns the *form*. The agent owns the *content*.**
+
+Anything structural, mechanical, or rule-based — frontmatter assembly, TTL
+assignment, log writing, index regeneration, inbox promotion, tag
+canonicalization, similarity-based search-before-write, source-artifact
+verification, staleness scanning — lives in the Go tooling layer (§9).
+These run as deterministic binaries with JSON output, invoked by agents
+as tool calls or by the host (cron, hooks, humans) outside any session.
+
+The agent's per-session token budget is reserved for the work only an LLM
+can do:
+
+- Composing the claim itself (the body text).
+- Picking the `epistemic-type` when ambiguous.
+- Assessing evidence quality and confidence.
+- Deciding whether two notes are *semantically* the same claim when titles
+  differ.
+- Drafting synthesis prose on top of a tool-assembled scaffold.
+- Resolving genuine contradictions in `_contested/`.
+
+Every feature in this design must pass the test: *can this be done
+deterministically?* If yes, it goes in a binary, not in an agent prompt.
+This principle is the lens for evaluating the rest of §6 and §9.
+
+---
 
 ### 5.1 Vault location and configuration
 
@@ -607,11 +632,14 @@ any remote. Durability is handled by `agent-memory backup`.
 
 ```
 AgentMemory/
+├── AGENTS.md                    ← Vault-root pointer; tells any LLM opening the
+│                                  vault where to find the writing protocol
 ├── _meta/
 │   ├── writing-protocol.md      ← The rules agents MUST follow when writing
 │   ├── tag-taxonomy.md          ← Canonical tags + aliases (auth → authentication, authz…)
-│   ├── constraints-summary.md   ← Librarian-maintained synthesis of all active constraints
-│   └── status-lifecycle.md      ← Lifecycle stages + edit vs. supersession rules
+│   ├── constraints-summary.md   ← Tool-regenerated synthesis of all active constraints
+│   ├── status-lifecycle.md      ← Lifecycle stages + edit vs. supersession rules
+│   └── log.md                   ← Append-only chronological log; written by tools, never by agents
 │
 ├── _inbox/                      ← All agent writes land here first
 │   └── {YYYY-MM-DD}-{slug}.md
@@ -620,14 +648,14 @@ AgentMemory/
 │   └── {slug}-CONTESTED.md
 │
 └── notes/                       ← All promoted notes, flat
-    ├── {slug}.md                ← knowledge note
-    └── _index-{scope}.md        ← Librarian-maintained navigation index (per domain / project)
+    ├── {slug}.md                ← knowledge note (any epistemic type incl. synthesis)
+    └── _index-{scope}.md        ← Tool-regenerated navigation index (per domain / project)
 ```
 
 The folder structure is minimal and reflects **lifecycle stage only**, not
 content type. Classification — domain, project, scope, epistemic type — lives
 entirely in frontmatter. A note that is simultaneously a `constraint`, a
-`golang` concern, and scoped to `opencode-orchestrator` carries all three axes
+`golang` concern, and scoped to a particular project carries all three axes
 as tags; no folder hierarchy can represent that without an arbitrary choice.
 
 Consequently, there are no rename operations after a note's first promotion.
@@ -647,18 +675,19 @@ Every note written by an agent MUST follow this structure:
 title: "Concise factual claim or pattern name"
 created: 2026-04-24
 updated: 2026-04-24
-review-by: 2026-07-24          # TTL by epistemic type (see §6.6)
+review-by: 2026-07-24          # TTL by epistemic type (see §5.6); blank for synthesis
 status: inbox                  # inbox | verified | deprecated | contested | superseded
 confidence: medium             # low | medium | high
-epistemic-type: observation    # observation | pattern | constraint | decision | assumption
+epistemic-type: observation    # observation | pattern | constraint | decision | assumption | synthesis
 scope: project                 # project | cross-project
-project: opencode-orchestrator # source project; cross-project notes leave this blank
+project: project-slug          # source project; cross-project notes leave this blank
 domain: [golang, auth]         # technology domains this note applies to
 source-agent: research/analyst-a
-source-artifact: ".qrspi/auth-refresh/research.md"
+source-artifact: "<repo-relative path or URL of the artifact this claim came from>"
 verified-by: ""                # agent or human who promoted to verified
 verified-date: ""
-update-type: ""                # only set on correction notes: edit | supersedes
+requires-human-review: false   # set true by memory-write for constraint/decision; gates memory-promote
+update-type: ""                # only set by memory-write on staged correction notes: supersedes
 targets: []                    # only set on correction notes: [[note-slug]] being amended
 tags: [golang, auth, middleware]
 ---
@@ -681,11 +710,25 @@ One short paragraph. One claim, one pattern, or one decision. No padding.
 #tag1 #tag2
 ```
 
-**On `update-type` and `targets`:** these fields are blank on new knowledge
-notes. They are only populated when an agent is writing a *correction* to an
-existing note (see §6.5 correction protocol). The distinction is intentional —
-a correction note is not new knowledge; it is an instruction to the Librarian
-to modify or supersede a specific existing note.
+**On `update-type` and `targets`:** these fields are blank on new
+knowledge notes. They are populated automatically by `memory-write` only
+when `--update=<slug>` targets a high-stakes note (`constraint`,
+`decision`, `assumption`) and supersession staging is required. In-place
+edits to `observation`/`pattern`/`synthesis` targets do not produce a
+correction note at all — the tool edits the target directly and writes a
+`## Change log` line. See §5.5.
+
+**On `requires-human-review`:** set to `true` by `memory-write` for
+`constraint` and `decision` writes. `memory-promote` will not promote
+any note with this flag set; clearing it requires `memory-promote
+--slug=<x> --confirmed` (issued by the human after `memory-curate`
+review).
+
+**On synthesis pages:** synthesis notes use a different body layout
+because they are derived, not source. Required sections are
+`## Synthesis` (the prose) and `## Contributing notes` (deterministically
+assembled by `memory-synthesize`). The `## Evidence`/`## Implications`
+sections are not required for synthesis; `lint-note` exempts them.
 
 **On `Related`:** agents write live `[[wiki-links]]` directly. Unresolved
 links (where the target note does not yet exist) are acceptable — Obsidian
@@ -696,237 +739,255 @@ flags accumulating unresolved links during curation passes.
 
 ### 5.4 Memory tiers and retrieval architecture
 
-See §5.1 (context injection) and §5.3 (two-phase retrieval) for the concepts
-behind this section.
+See §4.1 (context injection) and §4.3 (two-phase retrieval) for the
+concepts behind this section.
 
 | Tier | Contents | When loaded | Budget |
 |---|---|---|---|
-| **Core** | `_meta/writing-protocol.md` + `_meta/constraints-summary.md` | Every session start, unconditionally | Target: < 600 tokens combined |
-| **Index** | `notes/_index-{project}.md` + `notes/_index-{domain}.md` for active domains | Session start, for current project + declared domains | ~300 tokens per index; total target < 1500 tokens |
-| **Archival** | All other notes in `notes/` | On demand during R-phase, Q-phase, planning, implementation | Two-phase retrieval; cap 10 bodies per query |
+| **Core** | `_meta/writing-protocol.md` + `_meta/constraints-summary.md` + tail of `_meta/log.md` | Every session start, unconditionally, via `memory-context` | Target: < 600 tokens combined |
+| **Index** | `notes/_index-{project}.md` + `notes/_index-{domain}.md` for active domains | Session start, for current project + declared domains, via `memory-context` | ~300 tokens per index; total target < 1500 tokens |
+| **Archival** | All other notes in `notes/` (including `synthesis` pages) | On demand during work, via `memory-search` | Two-phase retrieval; cap 10 bodies per query |
 
 **Core tier is size-capped, not category-capped.** It never loads "all
 constraint notes" — it loads `constraints-summary.md`, a single
-Librarian-maintained file that summarises every active constraint in one
-line each. If an agent needs the full body of a specific constraint, it
-fetches that note via Phase 2. This is what keeps the Core tier bounded
-as the vault grows.
+tool-regenerated file that summarises every active constraint in one
+line each. The recent `log.md` tail (last ~20 entries) gives the agent a
+cheap window onto what has changed since the last session. If an agent
+needs the full body of a specific note, it fetches that note via
+`memory-search` Phase 2.
 
 ---
 
 ### 5.5 Write protocol (how agents write without poisoning the vault)
 
-**Step 1 — Search before write**
-Before writing any note, the agent MUST search the vault for existing notes
-on the same topic (by tag + keyword). If a note already exists:
-- Same claim → update the `updated` date; don't duplicate
-- Related claim → add a suggestion in the `## Related` section body
-- Contradicting claim → write to `_contested/`, link both, set both to `status: contested`
+The write protocol is enforced by the `memory-write` tool (§9). The agent
+is responsible only for choosing the epistemic type, providing the claim
+body, declaring evidence and source, and selecting one of three flags:
+`--new-claim`, `--update=<slug>`, or `--contest=<slug>`. Everything else —
+frontmatter assembly, TTL assignment, timestamping, similarity check,
+inbox placement, log writing, lint gating — happens inside the tool.
 
-**Step 2 — Land in `_inbox/`, not directly in the hierarchy**
-All agent writes go to `_inbox/`. This is a visibility buffer, not a mandatory
-human gate. Notes auto-promote to their correct vault location when the
-`review-by` TTL expires without challenge. You can intervene at any time,
-but you are not required to.
+**What the agent does**
 
-**Step 3 — Epistemic type determines the promotion path**
-Every note must declare its `epistemic-type`. The type controls how the note
-is promoted from `_inbox/`:
+1. Decide the `epistemic-type`. If unsure, default to `observation`.
+2. Write the claim body and the `## Evidence` section.
+3. Declare `--source-artifact=<stable path or URL>`.
+4. Choose one of:
+   - `--new-claim` — the agent has searched (via `memory-search`) and is
+     confident this is a new claim with no existing equivalent.
+   - `--update=<slug>` — amends an existing note. The tool routes the
+     correction by the *target's* epistemic type (see correction table
+     below).
+   - `--contest=<slug>` — contradicts an existing note. The tool moves
+     both notes to `_contested/` and links them.
 
-| Epistemic type | Promotion action | Rationale |
-|---|---|---|
-| `observation` | Move to `notes/`, `status: verified`, on TTL expiry | Machine-verifiable; fails fast if wrong |
-| `pattern` | Move to `notes/`, `status: verified`, after 2+ corroborating observations | Corroboration is the gate, not human review |
-| `assumption` | Stays in `_inbox/`; agents MUST re-verify before acting | Unverified belief; short TTL forces re-examination |
-| `constraint` | Move to `notes/`, `status: verified`, after Librarian review + human confirmation | Wrong constraint propagates silently everywhere |
-| `decision` | Move to `notes/`, `status: verified`, after human confirmation; ADR conflict protocol applies | Not agent-derivable; expensive to reverse if wrong |
+**What the tool does (every invocation of `memory-write`)**
 
-**Decision vs. ADR conflict protocol**
+1. **Similarity check.** Scan `notes/` and `_inbox/` for notes with overlapping
+   tags, matching project/domain, and a high title-similarity score against the
+   incoming title. If a candidate is found and the agent did not pass
+   `--update`/`--contest`/`--new-claim`, **refuse the write** and return the
+   candidate list as JSON. The agent must reissue with an explicit flag.
+2. **Frontmatter assembly.** Fill `created`, `updated`, `status: inbox`,
+   `confidence` (defaults to `medium` if unset), `source-agent` (from
+   environment), `verified-by`/`verified-date` (blank), and `review-by`
+   from the per-type TTL table (§5.6).
+3. **Tag canonicalization.** Resolve every supplied tag against
+   `_meta/tag-taxonomy.md` aliases.
+4. **Lint.** Invoke `lint-note` against the assembled note. Refuse on failure.
+5. **Constraint and decision gating.** For `epistemic-type: constraint` or
+   `decision`, mark the note `requires-human-review: true` in frontmatter so
+   `memory-promote` will not auto-promote it.
+6. **Inbox write.** Write `_inbox/{YYYY-MM-DD}-{slug}.md`.
+7. **Log entry.** Append one line to `_meta/log.md`:
+   `## [YYYY-MM-DD HH:MM] write | <type> | <slug> | by:<agent>`.
 
-When the Librarian curates a `decision` note during promotion, it MUST check
-`docs/adr/` in the relevant project repo for any ADR that covers the same
-decision. When a conflict is found:
+**Inbox lifecycle (handled by `memory-promote`, not the agent)**
 
-1. **The ADR wins immediately.** The vault note does not promote — it is
-   deprecated with a link to the conflicting ADR.
-2. **The conflict surfaces to the human as a distinct question**, separate
-   from the deprecation: *"This vault decision contradicts ADR-{id}. Does
-   this conflict suggest ADR-{id} needs revision?"*
-3. **Human decides:**
-   - *Yes, revise* → human initiates a new ADR via the existing `create-adr`
-     process. The new ADR, once accepted, supersedes the old one. The vault
-     note is re-evaluated against the new ADR and promoted normally if no
-     longer conflicting.
-   - *No, dismiss* → the deprecated vault note is archived in `_contested/`
-     as a record of the disagreement, not deleted. Future agents can see
-     that this question was raised and resolved.
+The agent's responsibility ends at the inbox write. Promotion happens
+out-of-session via the `memory-promote` tool, run on a `session-end` hook,
+a cron, or manually by the human:
 
-**The human is the only party who can initiate an ADR revision.** Agents
-must not attempt to draft or propose ADR revisions autonomously, even when
-they have high confidence the ADR is outdated. Surface the conflict, wait.
+| Epistemic type | Promotion action |
+|---|---|
+| `observation` | Move to `notes/`, `status: verified`, on TTL expiry |
+| `pattern` | Move to `notes/`, `status: verified`, when 2+ corroborating observations exist (deterministic check on shared tags + domain) |
+| `assumption` | Stays in `_inbox/`; agents MUST re-verify before acting |
+| `constraint` | Held in `_inbox/` with `requires-human-review: true`; promoted only after human confirmation (Librarian escalation) |
+| `decision` | Held in `_inbox/` with `requires-human-review: true`; promoted only after human confirmation (Librarian escalation). The vault note is the canonical record — there is no separate ADR layer to reconcile against. |
+| `synthesis` | Not produced via `memory-write`; created/refreshed by `memory-synthesize` and edited by the Librarian. Auto-promoted on creation. |
 
-**Step 4 — Never delete, only deprecate or supersede**
+**Decisions are vault-native.** Earlier drafts of this design defined an
+ADR-conflict reconciliation protocol against a separate `docs/adr/` layer.
+That layer is removed: the `decision` note in the vault, optionally backed by
+an associated `synthesis` note for narrative context, is the single source
+of truth. Projects that maintain their own decision records continue to do
+so — those records are simply external sources that an agent may cite as a
+`source-artifact` when writing a `decision` note. There is no special
+reconciliation flow.
+
+**Deprecation and supersession invariant**
 When knowledge changes, the old note gets `status: deprecated` and a link
-to the replacement. Deprecation without a replacement link is forbidden.
-This preserves the audit trail of what agents believed and when.
+to the replacement. Deprecation without a replacement link is forbidden
+and caught by `lint-vault`. This preserves the audit trail of what agents
+believed and when.
 
 ---
 
 **Correction and amendment protocol**
 
-When an agent discovers an existing note needs to be amended, it writes a
-correction note to `_inbox/` with `update-type` and `targets` populated.
-The Librarian applies the correction using a method determined by the
-*target* note's epistemic type:
+When `memory-write --update=<slug>` is invoked, the tool routes the
+correction by the *target* note's epistemic type. The Librarian is
+involved only for supersession of high-stakes types:
 
-| Target epistemic type | Update method | Rationale |
+| Target epistemic type | Update method | Who applies it |
 |---|---|---|
-| `observation` | In-place edit | Low stakes; `git log` on the file is the audit trail |
-| `pattern` | In-place edit | Patterns evolve incrementally; history tracks that |
-| `assumption` | Supersession | Preserves the chain of wrong beliefs — informative about agent reasoning |
-| `constraint` | Supersession | A corrected constraint should remain visible as a cautionary record |
-| `decision` | Supersession | Decisions have formal history; the old decision informs the new one |
+| `observation` | In-place edit | `memory-write` directly: edits target, bumps `updated`, appends to `## Change log`, writes log entry |
+| `pattern` | In-place edit | `memory-write` directly |
+| `synthesis` | In-place edit | `memory-write` directly (or `memory-synthesize` regeneration) |
+| `assumption` | Supersession | Librarian (escalated) — preserves the chain of wrong beliefs |
+| `constraint` | Supersession | Librarian (escalated) — corrected constraint remains visible as a cautionary record |
+| `decision` | Supersession | Librarian (escalated) — decisions have formal history; the old decision informs the new one |
 
-**In-place edit:** The Librarian edits the target note directly, updates the
-`updated` date, appends a one-line entry to a `## Change log` section at the
-bottom of the note recording the date and nature of the change, then deletes
-the inbox correction note. Git sees a single-file content diff — no renames.
+**In-place edit (tool-applied):** `memory-write` edits the target note
+directly, updates `updated`, appends a one-line entry to a `## Change log`
+section, and writes a `correction | <type> | <slug>` line to `_meta/log.md`.
+No inbox staging; no Librarian involvement. Git sees a single-file content
+diff.
 
-**Supersession:** The Librarian creates a new note in `notes/` with
-`status: verified` (bypassing normal inbox staging — the Librarian is the
-authority here), sets the original note to `status: superseded` with a link
-to the new note, and deletes the inbox correction note. The superseded note
-is never deleted — future agents encountering it follow the link forward.
-Git sees: one new file, one edit to the original, one deletion from `_inbox/`.
+**Supersession (Librarian-applied):** When `memory-write --update=<slug>`
+targets a high-stakes note (`constraint`, `decision`, `assumption`), the
+tool routes to staging instead of in-place edit: it writes a correction
+note to `_inbox/` with `update-type: supersedes` and `targets:
+[[old-slug]]`, sets `requires-human-review: true`, and logs the staging.
+The Librarian (invoked when this appears in `_inbox/`) creates the
+replacement note in `notes/` with `status: verified`, sets the original
+to `status: superseded` with a forward link, and removes the inbox
+staging note. The superseded note is never deleted — future agents follow
+the link forward.
 
 ---
 
 ### 5.6 Staleness prevention
 
-Every note has a `review-by` date. The logic:
+Every note has a `review-by` date assigned automatically by `memory-write`
+based on `epistemic-type`. The defaults:
 
 | Epistemic type | Default TTL | Reasoning |
 |---|---|---|
 | `observation` | 90 days | Code changes; observations go stale |
 | `pattern` | 180 days | Patterns are more stable but still evolve |
 | `constraint` | 365 days | Constraints rarely change; if they do, it's a deliberate decision |
-| `decision` | 365 days | Links to ADR; ADR is the canonical source |
+| `decision` | 365 days | Decisions are durable; revisited annually |
 | `assumption` | 30 days | Assumptions must be challenged frequently |
+| `synthesis` | none | Regenerable from contributing notes; no fixed expiry |
 
-At session start, the Orchestrator (via the `memory-read` skill) checks for
-notes where `review-by < today` in the Core and Index tiers and surfaces
-them before starting work.
+The staleness scan runs deterministically inside `memory-context` at
+session start (and as `lint-vault --stale` on demand). Stale notes are
+surfaced to the calling agent before work begins. No agent reasoning is
+involved in detecting staleness.
 
 ---
 
-### 5.7 Integration with your agent hierarchy
+### 5.7 Integration with agent roles
 
-**Orchestrator** — on every context reset, runs the `memory-read`
-`session-init` workflow: loads Core tier (`writing-protocol.md` +
-`constraints-summary.md`) and the project index note for the active
-project. Surfaces any stale notes flagged by the staleness scan before
-starting work. Uses `memory-read` search workflow when it needs to
-investigate a specific area during triage or conflict checking.
+This design is deliberately agent-agnostic. The only role it defines is
+the Librarian (§5.8). Every other agent in any framework participates
+through the same three tools:
 
-**Research Lead / Analysts** — primary writers to the vault. After the
-R-phase, analysts write their factual findings as `observation` notes to
-`_inbox/` via `memory-write`. The Research Lead reconciles outputs using the
-existing quorum model before writing — divergence between analysts maps
-directly to confidence level (unanimous = high, majority = medium, divergent =
-low) and unresolved contradictions go to `_contested/`.
+- **Reading agents** — any agent that needs context. Calls `memory-context`
+  once at session start to load Core + indices + staleness list + recent
+  log tail in a single tool call. Calls `memory-search` on demand during
+  work for two-phase retrieval.
+- **Writing agents** — any agent that produces durable findings. Calls
+  `memory-write` with the chosen epistemic type, claim body, evidence,
+  source-artifact, and one of `--new-claim`/`--update`/`--contest`. The
+  tool handles everything else.
+- **The Librarian** — invoked only on tool escalations: high-stakes
+  promotions (`constraint`, `decision`), supersession of high-stakes
+  notes, contested-note resolution, drafting prose for synthesis pages
+  the tools have scaffolded, drafting pattern notes from
+  `memory-suggest-patterns` candidates.
 
-**Engineering Lead / Specialists** — read from vault to inform decisions;
-write `pattern` and `observation` notes when they discover non-obvious
-implementation facts. Security Reviewer writes `constraint` notes (these
-require Librarian review and human confirmation before taking effect).
+**Mapping to a multi-agent setup.** A typical hierarchy might map roles as:
 
-**Librarian** — dedicated agent responsible for the vault. Owns the write
-protocol, manages promotion and deprecation, surfaces stale notes, and
-resolves contested claims. See §6.8 for full definition.
+- A Research role (potentially with a quorum of analysts) is the primary
+  source of `observation` notes. When a quorum is used, divergence maps
+  directly to `confidence`: unanimous → high, majority → medium, divergent
+  → low. Unresolved contradictions are written with `--contest`.
+- An Engineering or Implementation role writes `pattern` and `observation`
+  notes when it discovers non-obvious implementation facts.
+- A Security or Review role writes `constraint` notes (which are gated
+  for human confirmation by the tool, not by the role).
+- A Planner or Orchestrator role is primarily a reading agent: it loads
+  context and consults search results to avoid contradicting verified
+  constraints.
 
-**Planner** — at session start, runs `memory-read` `session-init` to load
-`constraints-summary.md` and the active project index. Uses `memory-read`
-search to pull specific `decision` notes that are relevant to the work
-being planned. Planning should never contradict a verified constraint;
-`constraints-summary.md` is the authoritative checklist for that.
+None of these mappings are required by the memory system. The vault does
+not care which agent wrote a note; it cares about the epistemic type,
+source-artifact, and confidence.
 
 ---
 
 ### 5.8 The Librarian agent
 
-The Librarian is a dedicated leaf subagent with a single coherent
-responsibility: the vault is its domain. It is separate from the Enabler
-by design — the Enabler owns system infrastructure (agent definitions, skills,
-configuration); the Librarian owns knowledge governance. The separation keeps
-both roles clean and allows any team lead to invoke the Librarian directly
-without routing through the Enabler.
+The Librarian is the one role this design defines. Its scope is
+deliberately small: it is an LLM escalation handler for the cases where
+deterministic tooling cannot decide. Routine maintenance — promotion,
+indexing, logging, staleness, frontmatter, TTL, tag canonicalization,
+source-artifact verification — is owned by the static tools (§9) and never
+requires the Librarian.
 
-**Why no quorum on the Librarian:** The quorum pattern exists for ambiguous
-analytical judgments where independent perspectives add value. The Librarian's
-decisions are mostly deterministic — does this note already exist? does this
-frontmatter have all required fields? is this `review-by` date past today?
-The one judgment call (promote or reject a `constraint` note) is gated on
-human confirmation anyway, so a second Librarian instance adds cost and latency
-for no meaningful gain. The quorum already ran upstream in the Research Lead;
-by the time findings reach the Librarian, consensus has been established.
+**Why the Librarian exists at all:**
+- Composing the body of a `pattern` note from a tool-emitted candidate cluster.
+- Drafting the prose section of a `synthesis` page after `memory-synthesize`
+  has assembled the contributing-note scaffold.
+- Writing the supersession replacement when `memory-write --update`
+  targets a `constraint`, `decision`, or `assumption`.
+- Reviewing high-stakes inbox items (`constraint`, `decision`) and
+  surfacing a promote/reject recommendation for the human.
+- Resolving notes in `_contested/` when the contradiction is non-trivial.
 
-**Placement:** The Librarian is a standalone global agent defined at
-`~/.config/opencode/agent/librarian.md`. It is not tied to any team manifest.
-Any team lead or the Orchestrator can invoke it directly. This keeps the
-Librarian available to all agent setups on the machine without requiring
-per-team registration.
+It is invoked only when a tool returns `requires_llm: true` or when a human
+asks for one of the above. Most sessions do not invoke the Librarian at all.
+
+**Why no quorum on the Librarian:** The remaining judgments are either
+bounded prose drafting or a single recommendation to the human. A second
+Librarian instance adds latency without changing the outcome. Upstream
+quorum (where used) has already established the underlying claim.
+
+**Placement:** The Librarian is a standalone global agent definition,
+framework-portable. In OpenCode, this is
+`~/.config/opencode/agent/librarian.md`; in pi or other frameworks, the
+equivalent global agent location. It is never tied to a team manifest.
 
 **Permissions:**
 - `read`: allow (vault path)
 - `write`: allow (vault path only)
 - `edit`: allow (vault path only)
-- `bash`: `grep`, `find`, `git` on vault directory = allow; `*` = deny
+- `bash`: `memory-*` and `lint-*` binaries on vault directory = allow;
+  `git`/`grep`/`find` on vault directory = allow; `*` = deny
 - `task`: deny (leaf subagent; does not spawn sub-agents)
 
-**Responsibilities and skills:**
+**Tools the Librarian invokes:**
 
-**`memory-read`** — router skill with two workflows; used by all agents
-and accessible from any framework that can run skills
+The Librarian uses the same agent-facing tools as everyone else
+(`memory-context`, `memory-search`, `memory-write`), plus two it has
+exclusive access to:
 
-*`session-init` workflow* — runs once at session start (see §5.1):
-1. Load `_meta/writing-protocol.md` and `_meta/constraints-summary.md`
-   unconditionally. Combined target: < 600 tokens.
-2. Load `notes/_index-{project}.md` for the active project and
-   `notes/_index-{domain}.md` for each domain declared relevant to the
-   session.
-3. Staleness scan: grep for notes where `review-by < today` across
-   `notes/`; surface the list to the calling agent before work begins.
-4. Context budget gate: if total loaded content exceeds 2000 tokens,
-   load the project index only and defer domain indices to on-demand
-   search. Log the deferral so the agent knows to search explicitly.
+- `memory-curate` — for each high-stakes inbox item, presents the note
+  alongside relevant existing notes and produces a structured
+  promote/reject recommendation. Output is surfaced to the human; the
+  human's confirmation triggers `memory-promote --slug=<x> --confirmed`.
+- `memory-synthesize <entity>` (in draft mode) — generates a scaffold the
+  Librarian then fills with prose. The non-draft mode of the same tool
+  performs deterministic refresh and does not need the Librarian.
 
-*`search` workflow* — runs on demand during work (see §5.3):
-1. **Phase 1 — Discovery:** expand query terms against
-   `_meta/tag-taxonomy.md` aliases. Grep frontmatter fields across
-   `notes/`. Filter: `status: verified` only. Return titles + frontmatter.
-   Include match count.
-2. **Phase 2 — Selective read:** calling agent selects candidates from
-   Phase 1 results. Librarian reads those note bodies. Hard cap: 10
-   notes per invocation.
-
-Used by: all agents; Orchestrator and Planner invoke `session-init` at
-session start; all others invoke `search` during work phases.
-
-**`memory-write`** — writes a note to `_inbox/` following the protocol  
-Input: note content + frontmatter fields  
-Enforces: search-before-write, epistemic typing, TTL assignment by type  
-Used by: Research analysts, Engineering specialists, Security Reviewer
-
-**`memory-curate`** *(Librarian-only)* — reviews `_inbox/` for high-stakes notes  
-Scope: only processes `constraint` and `decision` notes; `observation` and
-`pattern` notes auto-promote without curation  
-Output: recommendation to promote or reject, with reasoning, surfaced to human  
-Triggered by: Orchestrator or any lead when a new `constraint` or `decision`
-note appears in `_inbox/`
-
-All three skills use direct filesystem operations — `find`, `grep` on
-frontmatter, `read`, `write` — which agents already have permission for.
-No external server required.
+All other operations the Librarian might appear to do (writing the log,
+updating an index, promoting an observation, computing TTL, scanning
+staleness) are tool side-effects, not Librarian work. Even
+`memory-curate` itself appends its own log entry on every invocation —
+the Librarian does not write to `_meta/log.md` directly.
 
 ---
 
@@ -939,7 +1000,7 @@ No external server required.
 | Conflicting writes | Search-before-write + `_contested/` staging for contradictions |
 | Hallucination laundering | `_inbox/` visibility buffer + epistemic typing; `constraint`/`decision` types require Librarian review and human confirmation |
 | Citation collapse | Mandatory `source-agent`, `source-artifact` fields |
-| Agent overconfidence | `confidence: low/medium/high` — Research Lead quorum maps directly to this (unanimous = high, majority = medium, divergent = low) |
+| Agent overconfidence | `confidence: low/medium/high` — upstream quorum (where used) maps directly: unanimous = high, majority = medium, divergent = low |
 | Silent deprecation | Never delete, only deprecate or supersede with a link to the replacement |
 | Scope creep | Short atomic notes + tag taxonomy prevents sprawl |
 | Context rot | Index-first loading; two-phase retrieval; Core tier hard-capped at 600 tokens |
@@ -958,147 +1019,332 @@ for routine observations is over-engineering.
 
 ## 8. Implementation Sequence
 
-1. **Write `_meta/writing-protocol.md` first** — this is the constitution of
-   the memory system. Get explicit approval on it before any agent touches the
-   vault. If the protocol is wrong, everything built on top of it is wrong.
+The order is dictated by the static-tooling principle (§5.0): tools land
+before the Librarian agent, because most of what earlier drafts assigned
+to the Librarian is now a tool side-effect.
 
-2. **Create the vault** — run `agent-memory init`: prompts for vault path,
-   creates `_meta/`, `_inbox/`, `_contested/`, and `notes/` directories,
-   seeds `_meta/` from embedded templates, writes `~/.agent-memory.json`.
-   Open the vault in Obsidian.
+1. **Write `_meta/writing-protocol.md` first** — the constitution of the
+   memory system. Reflects the static-tooling factoring: it tells agents
+   what they are responsible for (claim, evidence, type, flag) and points
+   at the tools that handle everything else.
 
-3. **Write the `memory-read` skill** — router skill with `session-init`
-   and `search` workflows (see §5.1, §5.2, §5.3). Start with the
-   `session-init` workflow first — it unblocks all agents immediately.
-   Add the `search` workflow second.
+2. **Build the Go tooling core** — `agent-memory init`, `lint-note`,
+   `lint-vault`. Init scaffolds the vault (including `AGENTS.md`,
+   `_meta/log.md`, the `_meta/` templates) and writes `~/.agent-memory.json`.
 
-4. **Write the `memory-write` skill** — implements the §6.5 protocol:
-   search-before-write, land in `_inbox/`, enforce required frontmatter,
-   assign TTL by epistemic type.
+3. **Build the agent-facing trio** — `memory-context`, `memory-write`,
+   `memory-search`. These three commands are the entire agent-side surface
+   for normal operation. Until these exist, no agent can use the vault.
 
-5. **Define the Librarian agent** — leaf subagent definition at
-   `~/.config/opencode/agent/librarian.md`. Standalone global agent; not
-   added to any team manifest.
+4. **Build the maintenance commands** — `memory-promote`, `memory-reindex`.
+   With these in place, the inbox lifecycle and index maintenance run
+   without any LLM involvement, on a `session-end` hook or cron.
 
-6. **Write the `memory-curate` skill** — Librarian-only; reviews `_inbox/`
-   for `constraint` and `decision` notes; produces promote/reject
-   recommendations for human confirmation.
+5. **Define the Librarian agent** — thin escalation handler (§5.8). The
+   definition is short because the responsibilities are short. Standalone
+   global agent; not added to any team manifest.
 
-7. **Seed `_meta/constraints-summary.md` and first index notes** — Librarian
-   creates these files from any existing ADRs and known constraints. These
-   two files make the Core and Index tiers immediately useful before any
-   knowledge notes exist.
+6. **Build `memory-curate`** — Librarian-only; structures high-stakes
+   inbox items (`constraint`, `decision`) into a promote/reject
+   recommendation for the human.
 
-8. **Update the Orchestrator** — add `memory-read` `session-init` to the
-   context reset recovery sequence. Add staleness surfacing before any
-   work begins.
+7. **Seed `_meta/constraints-summary.md` and first index notes** — the
+   first run of `memory-reindex` produces empty indices; seed them with
+   any known constraints from existing project records. The Core and
+   Index tiers become useful immediately.
 
-9. **Update the Research analysts** — after producing research artifacts, write
-   key findings as `observation` notes via `memory-write`.
+8. **Wire reading agents to `memory-context`** — add a single
+   session-start tool call (or framework-equivalent hook) to every agent
+   definition that needs context. No further per-agent integration is
+   required for reads.
 
-10. **Backfill** — optionally, run the Research team over existing QRSPI
-    artifacts and ADRs to seed the vault with your current knowledge base.
+9. **Wire writing agents to `memory-write`** — enable the tool for any
+   agent that produces durable findings. The tool's refusal behaviour
+   (`--new-claim`/`--update`/`--contest` required on similarity hit)
+   teaches the agent the discipline; no per-agent prompt engineering
+   needed.
+
+10. **Build `memory-synthesize` and `memory-suggest-patterns`** —
+    deferrable until the vault has accumulated content. These produce
+    deterministic scaffolds; the Librarian fills in prose only when
+    invoked.
+
+11. **Backfill (optional)** — run reading agents over existing project
+    artifacts to seed the vault with current knowledge. Use `memory-write`
+    like any other agent.
 
 ---
 
 ## 9. Go CLI Tooling
 
-The memory system ships as a Go module (`github.com/michaelin/agent-memory`)
-with three binaries. The CLI is for human use; the linters are for agent use.
+The memory system ships as a Go module (`github.com/michaelin/agent-memory`).
+The binaries are organized by audience:
 
 ### 8.1 Audience separation
 
-| Binary | Audience | Output format | Purpose |
+| Binary | Audience | Output | Purpose |
 |---|---|---|---|
 | `agent-memory` | Human | Pretty, interactive | Vault setup, backup, lint wrapper |
-| `lint-note` | Agent | JSON | Single-file validation before write/promote |
-| `lint-vault` | Agent | JSON | Cross-file integrity checks |
+| `memory-context` | Agent | JSON | Bundled session-start context (replaces multi-step session-init workflow) |
+| `memory-write` | Agent | JSON | Single entry point for all agent writes; enforces protocol deterministically |
+| `memory-search` | Agent | JSON | Two-phase retrieval (Phase 1 = frontmatter discovery; Phase 2 = selective body read) |
+| `memory-promote` | Host (cron / hook / human) | JSON | Auto-promote inbox notes past TTL or with corroboration; no LLM |
+| `memory-reindex` | Host | JSON | Regenerate `_index-*.md` and `_meta/constraints-summary.md` from frontmatter scan |
+| `memory-synthesize` | Host or Librarian | JSON / markdown | Build/refresh a synthesis page scaffold for an entity |
+| `memory-suggest-patterns` | Host or Librarian | JSON | Cluster recent observations and emit pattern-note candidates |
+| `memory-curate` | Librarian | JSON | Structures a high-stakes inbox item for human confirmation |
+| `lint-note` | Agent / tool | JSON | Single-file validation; called as a hard gate by `memory-write` |
+| `lint-vault` | Agent / host | JSON | Cross-file integrity (links, orphans, stale, source-artifact resolution) |
 
-Agents call `lint-note` and `lint-vault` directly as tools. The CLI's
-`agent-memory lint` subcommand is a human-readable wrapper over the same
-underlying logic.
+The agent-facing trio (`memory-context`, `memory-write`, `memory-search`)
+is the entire interface a normal agent needs. Maintenance binaries are
+invoked outside sessions; the Librarian is invoked only on tool
+escalations.
 
 ### 8.2 Repository structure
 
 ```
 agent-memory/
 ├── cmd/
-│   ├── agent-memory/    # human CLI: init, backup, lint (pretty wrapper)
-│   ├── lint-note/       # agent tool: single-file validation, JSON output
-│   └── lint-vault/      # agent tool: cross-file checks, JSON output
+│   ├── agent-memory/         # human CLI: init, backup, lint wrapper
+│   ├── memory-context/       # agent: bundled session-start payload
+│   ├── memory-write/         # agent: single write entry point
+│   ├── memory-search/        # agent: two-phase retrieval
+│   ├── memory-promote/       # host: auto-promotion pass
+│   ├── memory-reindex/       # host: regenerate indices + constraints summary
+│   ├── memory-synthesize/    # host/Librarian: synthesis page scaffold
+│   ├── memory-suggest-patterns/ # host/Librarian: pattern candidates
+│   ├── memory-curate/        # Librarian: high-stakes inbox structuring
+│   ├── lint-note/            # single-file validation
+│   └── lint-vault/           # cross-file checks
 ├── internal/
-│   ├── config/          # XDG resolution, env var override, ~/.agent-memory.json
-│   ├── vault/           # note struct, frontmatter parsing (gopkg.in/yaml.v3)
-│   ├── lint/            # shared lint logic used by all three binaries
-│   ├── init/            # vault scaffolding, _meta/ seeding, gum prompts
-│   └── backup/          # lint gate, timestamped tar.gz
+│   ├── config/               # XDG resolution, env var override, ~/.agent-memory.json
+│   ├── vault/                # note struct, frontmatter parsing (gopkg.in/yaml.v3)
+│   ├── lint/                 # shared lint logic
+│   ├── similarity/           # title/tag similarity for search-before-write
+│   ├── logfile/              # append-only writer for _meta/log.md
+│   ├── ttl/                  # epistemic-type → review-by table
+│   ├── init/                 # vault scaffolding, _meta/ seeding
+│   └── backup/               # lint gate, timestamped tar.gz
 ├── testdata/
-└── go.mod               # module: github.com/michaelin/agent-memory
+└── go.mod                    # module: github.com/michaelin/agent-memory
 ```
 
-### 8.3 `lint-note` — single-file validation
+### 8.3 Agent-facing commands
+
+#### `memory-context`
+
+One call replaces the entire session-init workflow. Returns a single JSON
+payload bundling everything an agent needs at session start.
 
 ```bash
-lint-note notes/golang-error-handling.md
+memory-context [--project=<name>] [--domains=<a,b>] [--log-tail=20]
+```
+
+Returns:
+```json
+{
+  "core": {
+    "writing_protocol": "...",
+    "constraints_summary": "..."
+  },
+  "indices": {
+    "project": "...",
+    "domains": {"golang": "...", "auth": "..."}
+  },
+  "stale_notes": [{"slug": "...", "review_by": "..."}],
+  "recent_log": ["## [2026-04-24 10:13] write | observation | foo | by:research/analyst-a", ...],
+  "budget": {"loaded_tokens": 1842, "deferred": []}
+}
+```
+
+The budget gate (defer domain indices when total > 2000 tokens) runs
+inside the binary; the agent does not need to reason about it.
+
+#### `memory-write`
+
+Single entry point for all agent writes. The agent supplies the content;
+the tool handles the form.
+
+```bash
+memory-write \
+  --type=<observation|pattern|constraint|decision|assumption> \
+  --title=<...> \
+  (--new-claim | --update=<slug> | --contest=<slug>) \
+  [--project=<name>] [--domain=<a,b>] [--tags=<x,y>] \
+  [--source-artifact=<path-or-url>] \
+  [--confidence=<low|medium|high>] \
+  --body=<file-or-stdin>
+```
+
+Returns:
+```json
+{
+  "written": "_inbox/2026-04-24-foo.md",
+  "log_entry": "## [2026-04-24 10:13] write | observation | foo | by:research/analyst-a",
+  "requires_human_review": false
+}
+```
+
+Or, on similarity hit without a flag:
+```json
+{
+  "refused": true,
+  "reason": "similar_existing_note",
+  "candidates": [
+    {"slug": "foo", "title": "...", "score": 0.87, "path": "notes/foo.md"}
+  ],
+  "hint": "reissue with --update=<slug>, --contest=<slug>, or --new-claim"
+}
+```
+
+Side effects (always): assemble frontmatter, assign TTL, canonicalize tags,
+run `lint-note`, write inbox file, append to `_meta/log.md`. For
+`--update` against an `observation`/`pattern`/`synthesis` target, the
+edit is applied in place and no inbox file is produced.
+
+#### `memory-search`
+
+```bash
+memory-search <query> [--type=<...>] [--project=<...>] [--phase=1|2] [--slugs=<a,b>]
+```
+
+Phase 1 returns titles + frontmatter for all matches (`status: verified`
+only, tag aliases auto-expanded). Phase 2 takes a list of slugs and
+returns bodies, capped at 10. The two-phase split is enforced by the
+binary; an agent cannot accidentally request all bodies at once.
+
+### 8.4 Maintenance commands (no LLM in the loop)
+
+#### `memory-promote`
+
+Runs through `_inbox/` and applies the promotion table from §5.5:
+- `observation`: promote on TTL expiry (configurable: also promote on first
+  successful `lint-note` if `--eager` is passed).
+- `pattern`: promote when 2+ corroborating observation notes exist (shared
+  domain + tag overlap above threshold).
+- `assumption`: never promotes; flagged on TTL expiry for re-verification.
+- `constraint`, `decision`: held; only promoted with `--confirmed --slug=<x>`
+  (issued by the human after `memory-curate` review).
+- `synthesis`: not produced via inbox; not handled here.
+
+Writes a promotion line to `_meta/log.md` for every action.
+
+Intended invocation: `session-end` hook (where available), nightly cron,
+or manual by the human. Never invoked by an in-session agent.
+
+#### `memory-reindex`
+
+Deterministically regenerates `_index-{project}.md` and
+`_index-{domain}.md` files from a full frontmatter scan, plus regenerates
+`_meta/constraints-summary.md` from all `status: verified`
+`epistemic-type: constraint` notes. Idempotent. Replaces the entire
+"Librarian maintains the indices" loop with a binary that runs in milliseconds.
+
+#### `memory-synthesize <entity>`
+
+Given an entity slug or tag, gathers all `status: verified` notes that
+reference it and emits a synthesis-page scaffold: contributing-notes
+section (deterministically composed), backlink graph, gap markers. In
+`--draft` mode it leaves a `## Synthesis` section blank for the Librarian
+to fill with prose. In `--refresh` mode it updates only the
+deterministic sections of an existing synthesis page, leaving the prose
+untouched.
+
+#### `memory-suggest-patterns`
+
+Clusters recent (`--days=30`) `observation` notes by shared domain and
+tag overlap; emits JSON groupings of 2+ notes that look like they may
+corroborate a pattern. The Librarian (or human) reviews and uses
+`memory-write --type=pattern` to draft from each accepted cluster. The
+tool itself never writes pattern notes — drafting requires LLM judgment.
+
+#### `memory-curate` *(Librarian-only)*
+
+Processes one high-stakes inbox item (`constraint` or `decision`) at a
+time. Reads the staged note, runs `memory-search` for related existing
+notes, and emits a structured promote/reject recommendation as JSON for
+the human:
+
+```json
+{
+  "slug": "auth-tokens-rotate-90d",
+  "type": "constraint",
+  "recommendation": "promote",
+  "reasoning": "...",
+  "related_notes": [{"slug": "...", "relationship": "reinforces"}],
+  "conflicts": []
+}
+```
+
+The human's confirmation is the trigger for `memory-promote --slug=<x>
+--confirmed`, which clears `requires-human-review` and moves the note to
+`notes/`. `memory-curate` appends its own line to `_meta/log.md` on
+every invocation (`curate | <type> | <slug> | rec:<promote|reject>`) so
+the Librarian never writes the log directly.
+
+### 8.5 Lint binaries
+
+#### `lint-note`
+
+```bash
+lint-note _inbox/2026-04-24-foo.md
 # pass  → {"valid": true}
 # fail  → {"valid": false, "errors": ["missing field: confidence", "unresolved link: [[foo]]"]}
 ```
 
-Exit 0 on pass, 1 on failure. Agents call this before promoting any note.
-The `memory-write` and `memory-curate` skills call it as a hard gate —
-a note that fails lint is not written or promoted.
+Exit 0 on pass, 1 on failure. Called as a hard gate by `memory-write`
+and `memory-promote`.
 
 **Checks performed:**
 - All required frontmatter fields present and non-empty
-- `epistemic-type` is one of the allowed values
+- `epistemic-type` is one of the allowed values (incl. `synthesis`)
 - `status` is one of the allowed values
 - `confidence` is one of the allowed values
 - `created` and `updated` are valid ISO dates
-- `review-by` is a valid ISO date and is in the future (warn if < 7 days)
-- `## Evidence`, `## Implications`, `## Related` sections present
-- No frontmatter fields with placeholder values (e.g. `""` on required fields)
+- `review-by` is a valid ISO date and is in the future (warn if < 7 days);
+  not required for `synthesis`
+- `## Evidence`, `## Implications`, `## Related` sections present (not
+  required for `synthesis`, which uses `## Synthesis` + `## Contributing notes`)
+- No frontmatter fields with placeholder values
 
-### 8.4 `lint-vault` — cross-file integrity
+#### `lint-vault`
 
 ```bash
-lint-vault                    # all checks
-lint-vault --links            # unresolved wikilinks only
-lint-vault --orphans          # notes not referenced from any index
-lint-vault --stale            # notes where review-by < today
+lint-vault                       # all checks
+lint-vault --links               # unresolved wikilinks
+lint-vault --orphans             # notes not referenced from any index
+lint-vault --stale               # notes where review-by < today
+lint-vault --source-artifacts    # source-artifact paths/URLs that no longer resolve
+lint-vault --deprecated-no-link  # status: deprecated without a forward link
 ```
 
-Output: JSON array of findings, one object per issue.
-
-```json
-[
-  {"check": "unresolved-link", "file": "notes/foo.md", "link": "[[bar]]"},
-  {"check": "orphan", "file": "notes/baz.md"},
-  {"check": "stale", "file": "notes/qux.md", "review-by": "2026-01-01"}
-]
-```
-
-Exit 0 if no findings, 1 if any findings. The `agent-memory backup` command
-runs `lint-vault` as a gate — backup aborts if any findings are returned.
+Output: JSON array of findings. Exit 0 if clean, 1 if any findings.
+`agent-memory backup` runs `lint-vault` as a gate.
 
 **Why Go, not grep:** Wikilink extraction requires markdown-context-aware
-parsing. Grep fails on: multiple links per line, `[[slug|alias]]` syntax,
+parsing. Grep fails on multiple links per line, `[[slug|alias]]` syntax,
 links inside code blocks, and frontmatter boundary detection. Goldmark
 (`github.com/yuin/goldmark`) handles all of these correctly.
 
-### 8.5 `agent-memory` CLI commands
+### 8.6 `agent-memory` CLI commands (human-facing wrapper)
 
 | Command | What it does |
 |---|---|
-| `agent-memory init` | Interactive vault setup: prompt for path, scaffold directories, seed `_meta/` from embedded templates, write `~/.agent-memory.json` |
+| `agent-memory init` | Interactive vault setup: prompt for path, scaffold directories, seed `_meta/` (incl. `log.md` and `AGENTS.md`), write `~/.agent-memory.json` |
 | `agent-memory backup` | Run `lint-vault`; abort on findings; create timestamped `tar.gz` of vault |
 | `agent-memory lint` | Human-readable wrapper: runs `lint-note` on all files + `lint-vault`; pretty-prints findings |
+| `agent-memory promote` | Human-readable wrapper around `memory-promote` |
+| `agent-memory reindex` | Human-readable wrapper around `memory-reindex` |
 
 **`init` detail:**
 - Prompts for vault path interactively; default suggestion: `~/.local/share/agent-memory`
 - Seeds `_meta/` from Go `embed.FS` templates (no network, no external files)
-- Idempotent: re-running on an existing vault skips existing files, reports what was skipped
+- Creates `AGENTS.md` at vault root pointing at `_meta/writing-protocol.md`
+  so any LLM opening the vault discovers the conventions automatically
+- Idempotent: re-running on an existing vault skips existing files
 
-### 8.6 Configuration resolution
+### 8.7 Configuration resolution
 
 Priority order (highest to lowest):
 
@@ -1113,6 +1359,17 @@ Priority order (highest to lowest):
 }
 ```
 
+### 8.8 Session lifecycle (when each tool runs)
+
+| When | What runs | Who triggers it |
+|---|---|---|
+| Session start | `memory-context` | Agent (one tool call) |
+| During work | `memory-search`, `memory-write` | Agent, on demand |
+| Session end | `memory-promote`, `memory-reindex` | Host hook / cron / human — **no agent involvement** |
+| Daily / weekly | `lint-vault`, `memory-suggest-patterns` | Cron or human |
+| On escalation | `memory-curate`, Librarian invocation | Tool returns `requires_llm: true`, or human invokes |
+| On demand | `memory-synthesize`, `agent-memory backup` | Human |
+
 ---
 
 ## 10. Resolved Design Decisions
@@ -1124,15 +1381,23 @@ All questions from the initial design phase are closed.
 | Vault location | User-prompted during `agent-memory init`; default `~/.local/share/agent-memory` |
 | Cross-project scope | Cross-project and cross-agent from the start; all classification in frontmatter |
 | Wikilinks | Live `[[wiki-links]]` written directly by agents; unresolved links acceptable |
-| HITL scope | `constraint` and `decision` only; all others auto-promote on TTL expiry |
-| Librarian placement | Standalone global agent at `~/.config/opencode/agent/librarian.md`; no team manifest |
+| Epistemic types | Six types: observation, pattern, constraint, decision, assumption, synthesis |
+| HITL scope | `constraint` and `decision` only; all others auto-promote on TTL expiry or corroboration |
+| Decision records | Vault-native; no separate ADR layer or reconciliation protocol. External decision records (if a project keeps them) are cited as `source-artifact`. |
+| Static-tooling principle | Tool owns form, agent owns content; all deterministic work lives in Go binaries |
+| Log file | `_meta/log.md`, append-only, written by tools (`memory-write`, `memory-promote`), never by agents |
+| Index maintenance | `memory-reindex` regenerates from frontmatter scan; not Librarian work |
+| Promotion | `memory-promote` runs out-of-session (hook/cron/human); not Librarian work |
+| Librarian role | Escalation handler only — high-stakes review, supersession of high-stakes notes, prose drafting for synthesis/pattern, contested resolution |
+| Librarian placement | Standalone global agent (e.g. `~/.config/opencode/agent/librarian.md`); no team manifest |
+| Agent-framework coupling | Design is framework-agnostic; only the Librarian role is defined here |
 | Harness hooks | Agent-instruction baseline only; hooks documented as optional enhancements |
-| Tooling | Go CLI (`github.com/michaelin/agent-memory`); three binaries; lint is a hard gate |
+| Tooling | Go module `github.com/michaelin/agent-memory`; agent-facing trio + maintenance + lint binaries |
 | Git in vault | No git; vault is plain files; durability via `agent-memory backup` |
 | `git init` during init | Dropped; `init` is a plain file/folder scaffold from embedded templates |
 | Module path | `github.com/michaelin/agent-memory` (public repo) |
-| Memory consolidation | Future development; deferred until vault has real content |
-| Dreaming / pattern promotion | Future development; deferred |
+| Memory consolidation | `memory-reindex` covers deterministic parts; richer consolidation deferred |
+| Dreaming / pattern promotion | `memory-suggest-patterns` provides deterministic clustering; final drafting deferred to Librarian |
 
 ---
 
