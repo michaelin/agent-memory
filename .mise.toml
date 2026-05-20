@@ -1,0 +1,15 @@
+[tools]
+go = "latest"
+golangci-lint = "latest"
+
+[tasks.build]
+run = "go build -o bin/agent-memory ./cmd/agent-memory"
+
+[tasks.test]
+run = "go test -v ./... -args --ginkgo.succinct"
+
+[tasks.lint]
+run = "golangci-lint run"
+
+[tasks.test-integration]
+run = "go test -v -tags=integration ./test/integration/... -args --ginkgo.succinct"
