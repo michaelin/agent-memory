@@ -20,22 +20,9 @@ This directory contains the complete design review and incremental implementatio
    - Explains the hybrid skill + tool approach
    - Applies to both note writing and note search
 
-3. **REVIEW-SUMMARY.md**
-   - Overview of the entire review process
-   - Key findings from the original design
-   - Architectural decisions made
-   - Verification strategy
-   - Recommended next steps
-
-4. **DELIVERABLES.md**
-   - Summary of what was delivered
-   - Quick reference for each increment
-   - Questions answered
-   - Ready for QRSPI
-
 ### Reference Documents
 
-5. **AGENT_MEMORY_DESIGN.md** (original)
+3. **AGENT_MEMORY_DESIGN.md** (canonical design)
    - Complete design document
    - Theoretical foundations
    - Prior art review
@@ -46,7 +33,6 @@ This directory contains the complete design review and incremental implementatio
 
 ### If you want to understand the roadmap:
 1. Read **ROADMAP.md** (complete incremental plan)
-2. Skim **REVIEW-SUMMARY.md** (overview)
 
 ### If you want to understand the architectural decisions:
 1. Read **ARCHITECTURAL-DECISION-SKILL-VS-SUBAGENT.md** (skill vs subagent)
@@ -62,11 +48,11 @@ This directory contains the complete design review and incremental implementatio
 ### Idempotency
 All tools must be safe to run multiple times. This is a first-class requirement, not an afterthought.
 
-### XDG Support
-Configuration respects XDG folder structure with fallbacks:
-- `AGENT_MEMORY_VAULT` env var (highest priority)
-- `~/.config/agent-memory/config.json` (XDG_CONFIG_HOME)
-- `~/.local/share/agent-memory` (XDG_DATA_HOME)
+### Vault Discovery (git-init model)
+The vault is self-describing at `.agent-memory/` — analogous to `.git/`. No config file is required. Discovery order:
+1. `AGENT_MEMORY_VAULT` env var (highest priority)
+2. Walk up directories looking for `.agent-memory/` (project-local vault)
+3. `~/.local/share/agent-memory` (user-global fallback)
 
 ### Skills + Tools Architecture
 - **Skills** encapsulate agent-facing logic and teach calling agents
@@ -145,4 +131,4 @@ Each increment has comprehensive integration tests covering:
 
 ## Status
 
-**Ready for QRSPI process.** Each increment can be tackled as a complete vertical slice with design, research, structure, planning, work organization, implementation, and review phases.
+**Increment 1 (Vault Scaffolding) complete.** The vault discovery and initialization model is implemented. Each remaining increment can be tackled as a complete vertical slice with design, research, structure, planning, work organization, implementation, and review phases.

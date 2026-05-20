@@ -577,34 +577,49 @@ This principle is the lens for evaluating the rest of §6 and §9.
 
 ### 5.1 Vault location and configuration
 
-The vault path is declared once in a tool-agnostic config file at a
-well-known home-directory location:
-
-```
-~/.agent-memory.json
-```
-```json
-{
-  "vault": "~/Documents/Obsidian/AgentMemory"
-}
-```
-
-This file is owned by no specific tool. Any agent framework — OpenCode,
-pi, or anything else — reads it to discover the vault path. Skills in any
-framework reference `~/.agent-memory.json` rather than a tool-specific
-config directory. This means the same vault is shared automatically across
-all frameworks on the machine with zero per-tool or per-project configuration.
-
-**Environment variable override:** If `AGENT_MEMORY_VAULT` is set in the
-environment, it takes precedence over `~/.agent-memory.json`. This supports
-CI/CD contexts, headless agents, and cases where the home directory is not
-writable.
+The vault is created with `agent-memory init`, which follows a git-init
+model: the vault is a self-describing directory whose presence at a path
+*is* the configuration. No config file is written anywhere. The vault
+directory is named `.agent-memory/`.
 
 ```bash
-export AGENT_MEMORY_VAULT="/path/to/vault"
+agent-memory init              # creates .agent-memory/ in the current directory
+agent-memory init ~/vaults/work  # creates the vault at an explicit path
 ```
 
-Priority order: `AGENT_MEMORY_VAULT` env var → `~/.agent-memory.json` → error.
+This mirrors how `.git/` works: the directory is the artifact. Any tool
+that can find the directory can use the vault — no per-tool or per-project
+config file to maintain.
+
+**Vault discovery (for subcommands that need to locate an existing vault):**
+The resolution order is:
+
+1. `AGENT_MEMORY_VAULT` environment variable — explicit path; takes
+   precedence unconditionally. Supports CI/CD contexts, headless agents,
+   and cases where the home directory is not writable.
+2. Walk up the directory tree from the current working directory, looking
+   for a `.agent-memory/` directory — analogous to how `git` finds `.git/`.
+3. `~/.local/share/agent-memory` — global fallback for vaults not
+   associated with any particular working directory.
+
+For v1, the vault path is always explicit: either the `AGENT_MEMORY_VAULT`
+env var or the positional argument to `agent-memory init`. Directory
+walking is the intended discovery mechanism for future subcommands that
+operate on a vault without requiring the user to specify its path.
+
+**`agent-memory instructions`:** Rather than placing an `AGENTS.md` file
+inside the vault (which would couple the vault to a specific repo's
+conventions), the `instructions` subcommand prints a ready-to-paste blurb
+to stdout. Pipe it into whatever instruction file a given repo or framework
+uses:
+
+```bash
+agent-memory instructions >> AGENTS.md
+agent-memory instructions >> .cursor/rules
+```
+
+This keeps the vault self-contained and repo-instruction wiring explicit
+and per-project.
 
 **On confidentiality:** The vault is a plain local directory — no server, no
 network, no sync unless you explicitly opt in. Obsidian's local vault mode
@@ -617,9 +632,7 @@ any remote. Durability is handled by `agent-memory backup`.
 ### 5.2 Vault structure
 
 ```
-AgentMemory/
-├── AGENTS.md                    ← Vault-root pointer; tells any LLM opening the
-│                                  vault where to find the writing protocol
+.agent-memory/
 ├── _meta/
 │   ├── writing-protocol.md      ← The rules agents MUST follow when writing
 │   ├── tag-taxonomy.md          ← Canonical tags + aliases (auth → authentication, authz…)
@@ -637,6 +650,10 @@ AgentMemory/
     ├── {slug}.md                ← knowledge note (any epistemic type incl. synthesis)
     └── _index-{scope}.md        ← Tool-regenerated navigation index (per domain / project)
 ```
+
+There is no `AGENTS.md` at the vault root. Repo instruction files are
+wired separately, per project, using `agent-memory instructions` (see
+§5.1). This keeps the vault portable and free of repo-specific coupling.
 
 The folder structure is minimal and reflects **lifecycle stage only**, not
 content type. Classification — domain, project, scope, epistemic type — lives
@@ -1031,8 +1048,8 @@ to the Librarian is now a tool side-effect.
    at the tools that handle everything else.
 
 2. **Build the Go tooling core** — `agent-memory init`, `lint-note`,
-   `lint-vault`. Init scaffolds the vault (including `AGENTS.md`,
-   `_meta/log.md`, the `_meta/` templates) and writes `~/.agent-memory.json`.
+   `lint-vault`. Init scaffolds the vault (`_meta/` templates, `_meta/log.md`,
+   directory structure). No config file is written; the vault is self-describing.
 
 3. **Build the agent-facing trio** — `memory-context`, `memory-write`,
    `memory-search`. These three commands are the entire agent-side surface
@@ -1120,7 +1137,7 @@ agent-memory/
 │   ├── lint-note/            # single-file validation
 │   └── lint-vault/           # cross-file checks
 ├── internal/
-│   ├── config/               # XDG resolution, env var override, ~/.agent-memory.json
+│   ├── config/               # vault discovery (env var, directory walk, fallback)
 │   ├── vault/                # note struct, frontmatter parsing (gopkg.in/yaml.v3)
 │   ├── lint/                 # shared lint logic
 │   ├── similarity/           # title/tag similarity for search-before-write
@@ -1353,33 +1370,35 @@ links inside code blocks, and frontmatter boundary detection. Goldmark
 
 | Command | What it does |
 |---|---|
-| `agent-memory init` | Interactive vault setup: prompt for path, scaffold directories, seed `_meta/` (incl. `log.md` and `AGENTS.md`), write `~/.agent-memory.json` |
+| `agent-memory init [path]` | Create vault at `path` or `.agent-memory/` in cwd; seed `_meta/` from embedded templates; write `_meta/log.md`; no config file written; JSON output to stdout |
+| `agent-memory instructions` | Output agent configuration blurb to stdout for piping into agent definitions or harness configs |
 | `agent-memory backup` | Run `lint-vault`; abort on findings; create timestamped `tar.gz` of vault |
 | `agent-memory lint` | Human-readable wrapper: runs `lint-note` on all files + `lint-vault`; pretty-prints findings |
 | `agent-memory promote` | Human-readable wrapper around `memory-promote` |
 | `agent-memory reindex` | Human-readable wrapper around `memory-reindex` |
 
 **`init` detail:**
-- Prompts for vault path interactively; default suggestion: `~/.local/share/agent-memory`
+- Path is a positional argument; defaults to `.agent-memory/` in the current working directory (git-init model)
 - Seeds `_meta/` from Go `embed.FS` templates (no network, no external files)
-- Creates `AGENTS.md` at vault root pointing at `_meta/writing-protocol.md`
-  so any LLM opening the vault discovers the conventions automatically
-- Idempotent: re-running on an existing vault skips existing files
+- No `AGENTS.md` created in the vault — use `agent-memory instructions` to obtain the agent configuration blurb
+- `--force` overwrites existing files; `--clean --force` removes and recreates the vault directory
+- Idempotent without flags: re-running on an existing vault skips existing files
+- JSON output to stdout on success
 
 ### 8.7 Configuration resolution
 
 Priority order (highest to lowest):
 
 1. `AGENT_MEMORY_VAULT` environment variable
-2. `vault` field in `~/.agent-memory.json`
-3. Error — no vault configured
+2. Walk up from the current directory looking for `.agent-memory/` — the same
+   discovery model git uses to find `.git/`
+3. `~/.local/share/agent-memory` — global fallback
 
-`~/.agent-memory.json` format:
-```json
-{
-  "vault": "/Users/michaelin/.local/share/agent-memory"
-}
-```
+No config file is read or written. The vault is located entirely through the
+environment and the filesystem. This means `agent-memory init` in a project
+directory creates a project-scoped vault that all tools discover automatically
+when run from within that directory tree, while a global vault at the fallback
+path serves as the catch-all for invocations outside any project.
 
 ### 8.8 Session lifecycle (when each tool runs)
 
@@ -1401,7 +1420,7 @@ All questions from the initial design phase are closed.
 
 | Question | Decision |
 |---|---|
-| Vault location | User-prompted during `agent-memory init`; default `~/.local/share/agent-memory` |
+| Vault location | git-init model: `agent-memory init [path]` creates vault at `path` or `.agent-memory/` in cwd. Discovery: env var → walk up directory tree for `.agent-memory/` → `~/.local/share/agent-memory` fallback. No config file. |
 | Cross-project scope | Cross-project and cross-agent from the start; all classification in frontmatter |
 | Wikilinks | Live `[[wiki-links]]` written directly by agents; unresolved links reported as warnings by `memory-write`, hard-blocked at promotion by `memory-promote`; `lint-vault --links` covers both `notes/` and `_inbox/` |
 | Epistemic types | Six types: observation, pattern, constraint, decision, assumption, synthesis |

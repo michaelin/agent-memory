@@ -1,45 +1,37 @@
 # Agent Memory: Incremental Implementation Roadmap
 
-**Status:** Architectural questions resolved. Ready for QRSPI process.
+**Status:** Increment 1 complete. Increment 2 is next.
 
 Each increment is a complete vertical slice: design → research → structure → plan → work → review. Each increment is independently valuable and individually verifiable via comprehensive integration tests.
 
 ---
 
-## Increment 1: Vault Scaffolding & Configuration
+## Increment 1: Vault Scaffolding & Initialization
 
-**Goal:** Establish the vault structure and configuration layer so all subsequent increments have a place to write.
+**Goal:** Establish the vault structure and CLI entry point so all subsequent increments have a place to write.
 
 **What becomes possible after this increment:**
-- Agents can discover the vault location
+- A vault can be created at any path with a single command
 - The vault structure is initialized and idempotent
-- The writing protocol document exists (though it's mostly empty at this stage)
+- The writing protocol document exists (minimal content at this stage)
+- Agents can be given instructions for working with the vault via `agent-memory instructions`
 - Humans can browse the vault in Obsidian
 
 **Scope:**
 
-### Configuration Resolution
-- `AGENT_MEMORY_VAULT` environment variable (highest priority)
-- `~/.config/agent-memory/config.json` (XDG_CONFIG_HOME if set, else `~/.config`)
-- Fallback to `$HOME/.local/share/agent-memory` (XDG_DATA_HOME if set, else `~/.local/share`)
-- Config file format:
-  ```json
-  {
-    "vault": "/path/to/vault"
-  }
-  ```
-
-### Vault Initialization (`agent-memory init`)
+### Vault Initialization (`agent-memory init [path]`)
+- Uses a **git-init model**: creates a vault at the given path, or at `.agent-memory/` in the current directory if no path is provided
+- No configuration file is written; the vault's presence at a path IS the configuration
 - **Idempotency:** Running `init` multiple times on the same vault path is safe
-  - If vault already exists, verify structure is correct and exit 0
-  - If vault exists but is corrupted (missing required directories), repair it
-  - If vault exists but is from an older version, upgrade it (no-op for v1)
+  - If vault already exists and is intact, verify structure and exit 0
+  - If vault exists but is missing required directories, repair it
+  - `--force` flag: overwrite conflicting files
+  - `--clean --force` flags: delete and reinitialize the vault
 - Create vault directory structure:
   ```
-  AgentMemory/
-  ├── AGENTS.md                    ← Points to writing protocol
+  .agent-memory/
   ├── _meta/
-  │   ├── writing-protocol.md      ← Rules agents MUST follow (mostly empty in v1)
+  │   ├── writing-protocol.md      ← Rules agents MUST follow (minimal in v1)
   │   ├── tag-taxonomy.md          ← Empty in v1
   │   ├── constraints-summary.md   ← Empty in v1
   │   ├── status-lifecycle.md      ← Lifecycle stages (static template)
@@ -49,25 +41,47 @@ Each increment is a complete vertical slice: design → research → structure �
   └── notes/                       ← All promoted notes, flat
   ```
 - Seed `_meta/` files from embedded templates (no network, no external files)
-- Create `AGENTS.md` at vault root pointing at `_meta/writing-protocol.md`
-- Write configuration file to `~/.config/agent-memory/config.json` (or env var location)
-- Log initialization to `_meta/log.md`: `## [YYYY-MM-DD HH:MM] init | vault initialized`
+- Log initialization to `_meta/log.md`: `## [2026-05-11T14:30:00+03:00] init | vault initialized` (full ISO 8601 with timezone)
+- All commands emit JSON on stdout; exit 0 on success, exit 1 on error
+
+### Agent Instructions (`agent-memory instructions`)
+- Outputs an agent configuration blurb to stdout
+- Intended for piping into a repo's agent instruction file, e.g.:
+  ```
+  agent-memory instructions >> .claude/AGENTS.md
+  ```
+- `init` does not touch the user's repo; no `AGENTS.md` is written inside the vault
+
+### Vault Discovery (for future subcommands — not active in v1)
+- In v1, vault path is always explicit (via argument or current directory default)
+- Future subcommands will resolve vault location via:
+  1. `AGENT_MEMORY_VAULT` environment variable (highest priority)
+  2. Walk up directories looking for `.agent-memory/`
+  3. `~/.local/share/agent-memory` global fallback
 
 ### Writing Protocol (v1 — Minimal)
 - Document exists at `_meta/writing-protocol.md`
-- Content: "This vault is for agent memory. Writing is not yet enabled. See AGENTS.md for current capabilities."
+- Content: "This vault is for agent memory. Writing is not yet enabled. See the output of `agent-memory instructions` for current capabilities."
 - Will be expanded in Increment 2
+
+### Tooling
+- Go version managed via **mise**
+- Task runner: **mise** tasks
+- Tests: BDD with **Ginkgo/Gomega**; unit tests co-located in packages, integration tests in `test/integration/`
 
 ### Verification (Integration Tests)
 - **Idempotency:** Run `agent-memory init` twice on same path, verify no errors and vault state unchanged
-- **Config resolution:** Test all three config sources (env var, config file, default)
-- **XDG support:** Test with `XDG_CONFIG_HOME` and `XDG_DATA_HOME` set
-- **Fallback:** Test that default path is used when no config exists
+- **Explicit path:** Run `agent-memory init /some/path`, verify vault is created at that path
+- **Default path:** Run `agent-memory init` in a directory, verify `.agent-memory/` is created
 - **Vault structure:** Verify all required directories exist after init
 - **Seed files:** Verify all `_meta/` files exist and contain expected content
-- **AGENTS.md:** Verify it points to `_meta/writing-protocol.md`
-- **Log entry:** Verify init is logged to `_meta/log.md`
+- **Log entry:** Verify init is logged to `_meta/log.md` with full ISO 8601 timestamp
 - **Repair:** Corrupt vault (delete a directory), run init again, verify repair
+- **Force flag:** Verify `--force` overwrites conflicting files without error
+- **Clean reinit:** Verify `--clean --force` deletes and reinitializes the vault
+- **JSON output:** Verify all commands emit valid JSON on stdout
+- **Instructions output:** Run `agent-memory instructions`, verify output is a non-empty agent blurb
+- **No repo mutation:** Verify `init` does not create or modify any files outside the vault path
 
 ---
 
