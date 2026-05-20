@@ -43,16 +43,20 @@ func PrintTreeReport(report types.Report) {
 		fmt.Printf("%s%s %s\n", indent, e.leaf, stateGlyph(e.state))
 	}
 
-	var passed, failed int
+	var passed, failed, skipped, pending int
 	for _, e := range entries {
 		switch e.state {
 		case types.SpecStatePassed:
 			passed++
-		default:
+		case types.SpecStateFailed, types.SpecStatePanicked, types.SpecStateTimedout:
 			failed++
+		case types.SpecStateSkipped:
+			skipped++
+		case types.SpecStatePending:
+			pending++
 		}
 	}
-	fmt.Printf("\n%d passed, %d failed\n", passed, failed)
+	fmt.Printf("\n%d passed, %d failed, %d skipped, %d pending\n", passed, failed, skipped, pending)
 }
 
 func stateGlyph(s types.SpecState) string {

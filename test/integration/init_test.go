@@ -5,7 +5,6 @@ package integration_test
 import (
 	"encoding/json"
 	"os"
-	"os/exec"
 	"path/filepath"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -17,36 +16,8 @@ import (
 var binPath string
 
 var _ = BeforeSuite(func() {
-	binPath = buildBinaryOnce()
+	binPath = testutil.BuildBinary(GinkgoTB())
 })
-
-func buildBinaryOnce() string {
-	tmpDir, err := os.MkdirTemp("", "agent-memory-test-*")
-	Expect(err).NotTo(HaveOccurred())
-
-	bin := filepath.Join(tmpDir, "agent-memory")
-	moduleRoot := findModuleRoot()
-
-	cmd := exec.Command("go", "build", "-o", bin, "./cmd/agent-memory")
-	cmd.Dir = moduleRoot
-	out, err := cmd.CombinedOutput()
-	Expect(err).NotTo(HaveOccurred(), "build failed: %s", string(out))
-	return bin
-}
-
-func findModuleRoot() string {
-	dir, _ := os.Getwd()
-	for {
-		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
-			return dir
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			panic("could not find go.mod")
-		}
-		dir = parent
-	}
-}
 
 var _ = Describe("agent-memory init", func() {
 	var tmpDir string

@@ -10,7 +10,7 @@ import (
 )
 
 // BuildBinary builds the agent-memory binary and returns its path.
-func BuildBinary(t *testing.T) string {
+func BuildBinary(t testing.TB) string {
 	t.Helper()
 	binPath := filepath.Join(t.TempDir(), "agent-memory")
 
@@ -45,7 +45,7 @@ func RunBinary(binPath string, args ...string) (stdout, stderr string, exitCode 
 }
 
 // MustStat asserts a path exists and returns its FileInfo.
-func MustStat(t *testing.T, path string) os.FileInfo {
+func MustStat(t testing.TB, path string) os.FileInfo {
 	t.Helper()
 	info, err := os.Stat(path)
 	if err != nil {

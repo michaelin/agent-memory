@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -28,6 +29,9 @@ type InitError struct {
 
 // Init scaffolds or repairs a vault at the given path.
 func Init(vaultPath string, opts InitOptions) (*InitResult, error) {
+	if strings.TrimSpace(vaultPath) == "" {
+		return nil, fmt.Errorf("vault path must not be empty")
+	}
 	absPath, err := filepath.Abs(vaultPath)
 	if err != nil {
 		return nil, fmt.Errorf("resolving path: %w", err)
@@ -37,6 +41,8 @@ func Init(vaultPath string, opts InitOptions) (*InitResult, error) {
 		return nil, fmt.Errorf("--clean requires --force")
 	}
 	if opts.Clean && opts.Force {
+		// TODO: This heuristic is Unix-centric. Harden for Windows drive roots
+		// and UNC paths if cross-platform support is added.
 		cleanPath := filepath.Clean(absPath)
 		if cleanPath == "" || filepath.Dir(cleanPath) == cleanPath {
 			return nil, fmt.Errorf("refusing to remove root filesystem path")
@@ -141,25 +147,27 @@ func Init(vaultPath string, opts InitOptions) (*InitResult, error) {
 		}
 	}
 
-	// Append log entry
-	logPath := filepath.Join(absPath, "_meta", "log.md")
-	timestamp := time.Now().Format(time.RFC3339)
-	logEntry := fmt.Sprintf("\n## [%s] init | vault initialized\n", timestamp)
-	f, err := os.OpenFile(logPath, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0600)
-	if err != nil {
-		return nil, fmt.Errorf("opening log: %w", err)
-	}
-	defer f.Close()
-	if _, err := f.WriteString(logEntry); err != nil {
-		return nil, fmt.Errorf("writing log: %w", err)
-	}
-
 	status := "created"
 	if isExisting {
 		if len(repaired) > 0 {
 			status = "repaired"
 		} else {
 			status = "ok"
+		}
+	}
+
+	// Only append log entry on actual changes (not idempotent no-ops).
+	if status != "ok" {
+		logPath := filepath.Join(absPath, "_meta", "log.md")
+		timestamp := time.Now().Format(time.RFC3339)
+		logEntry := fmt.Sprintf("\n## [%s] init | vault initialized\n", timestamp)
+		f, err := os.OpenFile(logPath, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0600)
+		if err != nil {
+			return nil, fmt.Errorf("opening log: %w", err)
+		}
+		defer f.Close()
+		if _, err := f.WriteString(logEntry); err != nil {
+			return nil, fmt.Errorf("writing log: %w", err)
 		}
 	}
 

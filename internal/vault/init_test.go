@@ -117,6 +117,12 @@ var _ = Describe("vault.Init", func() {
 	})
 
 	Context("incompatible paths", func() {
+		It("errors on empty path", func() {
+			_, err := Init("", InitOptions{})
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("empty"))
+		})
+
 		It("errors when a required directory path is a file", func() {
 			vaultPath := filepath.Join(tmpDir, "vault")
 			_, err := Init(vaultPath, InitOptions{})
