@@ -497,7 +497,7 @@ becomes harder to navigate and more expensive to search.
 |---|---|
 | Update index notes; remove deprecated/superseded references | `memory-reindex` |
 | Resolve stale `_inbox/` items past TTL | `memory-promote` (auto-promote on TTL) and `lint-vault --stale` |
-| Identify pattern candidates from corroborating observations | `memory-suggest-patterns` (clusters; Librarian drafts) |
+| Identify pattern candidates from corroborating observations | Librarian maintenance pass (LLM judgment; no binary) |
 | Detect notes not referenced from any index | `lint-vault --orphans` |
 | Detect deprecated notes lacking a forward link | `lint-vault --deprecated-no-link` |
 
@@ -518,39 +518,25 @@ binaries (e.g. `memory-reindex --suggest-merges`, `lint-vault
 --missing-links`) rather than a new top-level pass.
 ---
 
-### 4.5 The dreaming / pattern promotion mechanism
+### 4.5 Pattern promotion
 
-**The problem:** Individual observations accumulate in the vault but the
-system has no automatic way to notice when multiple observations are
-corroborating the same underlying pattern. A human reviewing the vault might
-spot this, but agents working on individual tasks will not.
+**The problem:** Individual observations accumulate in the vault but no
+single agent has visibility across sessions to notice when multiple
+observations are corroborating the same underlying pattern.
 
-**The concept:** Inspired by OpenClaw's "dreaming" process, this is a
-background pass that reads recent observations, scores them for recurrence,
-and surfaces `pattern` note candidates when the evidence threshold is met.
+**The concept:** Pattern detection is a Librarian task, not a deterministic
+binary. On its maintenance pass (triggered by log-size threshold or human
+request), the Librarian reads recent `observation` notes, applies LLM
+judgment to spot clusters of corroborating claims, and drafts `pattern`
+notes via `memory-write --type=pattern` for clusters it considers genuine.
+No threshold tuning required — the Librarian uses the same judgment a
+human reviewer would.
 
-In this design, the deterministic half of dreaming ships as
-`memory-suggest-patterns` (§9):
-
-1. Scan `notes/` and `_inbox/` for `observation` notes added in the last N
-   days (configurable; default 30).
-2. Group observations by shared tags and domain.
-3. Within each group, identify observations whose titles and tag sets
-   overlap above a threshold (no vector search required).
-4. Emit groups of 2+ corroborating observations as a JSON candidate list.
-
-The tool stops there. **Drafting the actual `pattern` note from a candidate
-cluster requires LLM judgment** and is the Librarian's job: it reviews the
-cluster, writes a `pattern` note via `memory-write`, and the standard
-promotion path takes over. The split keeps the deterministic clustering
-cheap and reproducible while reserving LLM tokens for the part that
-genuinely needs them.
-
-**Why the threshold tuning is deferred:** Too aggressive and the tool
-emits spurious candidates; too conservative and it never fires. Tuning is
-best done after observing how the vault grows in practice. The first
-shipped version uses simple tag-overlap counts; refinement is a
-post-launch concern.
+This is intentionally simpler than a deterministic clustering binary: a
+cheap model (Haiku-class) reading ten recent observations and asking
+"do any of these corroborate each other?" is more accurate and easier to
+adjust than tuned Jaccard thresholds, and does not require a separate
+binary with its own maintenance burden.
 
 ---
 
@@ -566,8 +552,8 @@ The single most important factoring rule of this design:
 > **The tool owns the *form*. The agent owns the *content*.**
 
 Anything structural, mechanical, or rule-based — frontmatter assembly, TTL
-assignment, log writing, index regeneration, inbox promotion, tag
-canonicalization, similarity-based search-before-write, source-artifact
+assignment, log writing, index regeneration, inbox promotion,
+similarity-based search-before-write, source-artifact
 verification, staleness scanning — lives in the Go tooling layer (§9).
 These run as deterministic binaries with JSON output, invoked by agents
 as tool calls or by the host (cron, hooks, humans) outside any session.
@@ -689,7 +675,7 @@ verified-date: ""
 requires-human-review: false   # set true by memory-write for constraint/decision; gates memory-promote
 update-type: ""                # only set by memory-write on staged correction notes: supersedes
 targets: []                    # only set on correction notes: [[note-slug]] being amended
-tags: [golang, auth, middleware]
+tags: []                       # Librarian-assigned on maintenance pass; agents leave blank
 ---
 
 # Title
@@ -706,8 +692,6 @@ One short paragraph. One claim, one pattern, or one decision. No padding.
 
 ## Related
 - [[note-slug]] — short description of relationship
-
-#tag1 #tag2
 ```
 
 **On `update-type` and `targets`:** these fields are blank on new
@@ -730,10 +714,12 @@ because they are derived, not source. Required sections are
 assembled by `memory-synthesize`). The `## Evidence`/`## Implications`
 sections are not required for synthesis; `lint-note` exempts them.
 
-**On `Related`:** agents write live `[[wiki-links]]` directly. Unresolved
-links (where the target note does not yet exist) are acceptable — Obsidian
-renders them visually as broken links, making them easy to spot. The Librarian
-flags accumulating unresolved links during curation passes.
+**On `Related`:** agents write live `[[wiki-links]]` directly. All links
+must resolve to existing notes — `memory-write` flags unresolved links in
+the `warnings` array of its JSON response (write still proceeds, but the
+agent is informed immediately). `memory-promote` will not promote any note
+with unresolved links. `lint-vault --links` reports all unresolved links
+across `notes/` and `_inbox/` on demand.
 
 ---
 
@@ -784,22 +770,22 @@ inbox placement, log writing, lint gating — happens inside the tool.
 **What the tool does (every invocation of `memory-write`)**
 
 1. **Similarity check.** Scan `notes/` and `_inbox/` for notes with overlapping
-   tags, matching project/domain, and a high title-similarity score against the
-   incoming title. If a candidate is found and the agent did not pass
-   `--update`/`--contest`/`--new-claim`, **refuse the write** and return the
+   project/domain and a high title-similarity score (Jaccard on normalised
+   word tokens) against the incoming title. If a candidate is found and the
+   agent did not pass `--update`/`--contest`/`--new-claim`, **refuse the
+   write** and return the
    candidate list as JSON. The agent must reissue with an explicit flag.
 2. **Frontmatter assembly.** Fill `created`, `updated`, `status: inbox`,
    `confidence` (defaults to `medium` if unset), `source-agent` (from
-   environment), `verified-by`/`verified-date` (blank), and `review-by`
+   environment), `verified-by`/`verified-date` (blank), `tags` (blank —
+   the Librarian assigns tags on its maintenance pass), and `review-by`
    from the per-type TTL table (§5.6).
-3. **Tag canonicalization.** Resolve every supplied tag against
-   `_meta/tag-taxonomy.md` aliases.
-4. **Lint.** Invoke `lint-note` against the assembled note. Refuse on failure.
-5. **Constraint and decision gating.** For `epistemic-type: constraint` or
+3. **Lint.** Invoke `lint-note` against the assembled note. Refuse on failure.
+4. **Constraint and decision gating.** For `epistemic-type: constraint` or
    `decision`, mark the note `requires-human-review: true` in frontmatter so
    `memory-promote` will not auto-promote it.
-6. **Inbox write.** Write `_inbox/{YYYY-MM-DD}-{slug}.md`.
-7. **Log entry.** Append one line to `_meta/log.md`:
+5. **Inbox write.** Write `_inbox/{YYYY-MM-DD}-{slug}.md`.
+6. **Log entry.** Append one line to `_meta/log.md`:
    `## [YYYY-MM-DD HH:MM] write | <type> | <slug> | by:<agent>`.
 
 **Inbox lifecycle (handled by `memory-promote`, not the agent)**
@@ -903,11 +889,11 @@ through the same three tools:
   `memory-write` with the chosen epistemic type, claim body, evidence,
   source-artifact, and one of `--new-claim`/`--update`/`--contest`. The
   tool handles everything else.
-- **The Librarian** — invoked only on tool escalations: high-stakes
-  promotions (`constraint`, `decision`), supersession of high-stakes
-  notes, contested-note resolution, drafting prose for synthesis pages
-  the tools have scaffolded, drafting pattern notes from
-  `memory-suggest-patterns` candidates.
+- **The Librarian** — invoked only on maintenance triggers or human request:
+  high-stakes promotions (`constraint`, `decision`), supersession of
+  high-stakes notes, contested-note resolution, tagging untagged notes,
+  detecting pattern candidates from recent observations, drafting prose
+  for synthesis pages the tools have scaffolded.
 
 **Mapping to a multi-agent setup.** A typical hierarchy might map roles as:
 
@@ -934,22 +920,33 @@ source-artifact, and confidence.
 The Librarian is the one role this design defines. Its scope is
 deliberately small: it is an LLM escalation handler for the cases where
 deterministic tooling cannot decide. Routine maintenance — promotion,
-indexing, logging, staleness, frontmatter, TTL, tag canonicalization,
-source-artifact verification — is owned by the static tools (§9) and never
-requires the Librarian.
+indexing, logging, staleness, frontmatter, TTL, source-artifact
+verification — is owned by the static tools (§9) and never requires the
+Librarian.
 
 **Why the Librarian exists at all:**
-- Composing the body of a `pattern` note from a tool-emitted candidate cluster.
-- Drafting the prose section of a `synthesis` page after `memory-synthesize`
-  has assembled the contributing-note scaffold.
+- Assigning tags to untagged promoted notes in `notes/` (batch, on
+  maintenance pass, using `memory-tag`).
+- Detecting pattern candidates by reading recent `observation` notes with
+  LLM judgment; drafting accepted candidates as `pattern` notes via
+  `memory-write --type=pattern`.
+- Reviewing synthesis gaps surfaced by `lint-vault --dense`; drafting
+  synthesis prose after `memory-synthesize --draft` has assembled the
+  scaffold.
 - Writing the supersession replacement when `memory-write --update`
   targets a `constraint`, `decision`, or `assumption`.
 - Reviewing high-stakes inbox items (`constraint`, `decision`) and
   surfacing a promote/reject recommendation for the human.
 - Resolving notes in `_contested/` when the contradiction is non-trivial.
 
-It is invoked only when a tool returns `requires_llm: true` or when a human
-asks for one of the above. Most sessions do not invoke the Librarian at all.
+**Invocation triggers** (all statically detectable — no dynamic signal
+from tools required):
+- `requires-human-review: true` found in `_inbox/` by `memory-promote`
+- `_contested/` directory non-empty (detected by `lint-vault --contested`)
+- `_meta/log.md` exceeds configured line-count threshold (checked by host/cron)
+- Human request
+
+Most sessions do not invoke the Librarian at all.
 
 **Why no quorum on the Librarian:** The remaining judgments are either
 bounded prose drafting or a single recommendation to the human. A second
@@ -972,9 +969,14 @@ equivalent global agent location. It is never tied to a team manifest.
 **Tools the Librarian invokes:**
 
 The Librarian uses the same agent-facing tools as everyone else
-(`memory-context`, `memory-search`, `memory-write`), plus two it has
+(`memory-context`, `memory-search`, `memory-write`), plus tools it has
 exclusive access to:
 
+- `memory-tag` — tag taxonomy management. Used to assign tags to untagged
+  notes (`--assign --slug=<x> --tags=<a,b>`), accept new tags into the
+  taxonomy (`--accept <tag> [--alias=<x,y>]`), and reject proposals
+  (`--reject <tag> [--canonical=<existing>]`). Updates `_meta/tag-taxonomy.md`
+  and appends a log entry.
 - `memory-curate` — for each high-stakes inbox item, presents the note
   alongside relevant existing notes and produces a structured
   promote/reject recommendation. Output is surfaced to the human; the
@@ -1064,10 +1066,10 @@ to the Librarian is now a tool side-effect.
    teaches the agent the discipline; no per-agent prompt engineering
    needed.
 
-10. **Build `memory-synthesize` and `memory-suggest-patterns`** —
-    deferrable until the vault has accumulated content. These produce
-    deterministic scaffolds; the Librarian fills in prose only when
-    invoked.
+10. **Build `memory-synthesize` and `memory-tag`** —
+    deferrable until the vault has accumulated content. `memory-synthesize`
+    produces deterministic scaffolds; the Librarian fills in prose only when
+    invoked. `memory-tag` enables the Librarian's tagging maintenance pass.
 
 11. **Backfill (optional)** — run reading agents over existing project
     artifacts to seed the vault with current knowledge. Use `memory-write`
@@ -1091,10 +1093,10 @@ The binaries are organized by audience:
 | `memory-promote` | Host (cron / hook / human) | JSON | Auto-promote inbox notes past TTL or with corroboration; no LLM |
 | `memory-reindex` | Host | JSON | Regenerate `_index-*.md` and `_meta/constraints-summary.md` from frontmatter scan |
 | `memory-synthesize` | Host or Librarian | JSON / markdown | Build/refresh a synthesis page scaffold for an entity |
-| `memory-suggest-patterns` | Host or Librarian | JSON | Cluster recent observations and emit pattern-note candidates |
+| `memory-tag` | Librarian | JSON | Tag taxonomy management: assign tags, accept/reject proposals, update `tag-taxonomy.md` |
 | `memory-curate` | Librarian | JSON | Structures a high-stakes inbox item for human confirmation |
 | `lint-note` | Agent / tool | JSON | Single-file validation; called as a hard gate by `memory-write` |
-| `lint-vault` | Agent / host | JSON | Cross-file integrity (links, orphans, stale, source-artifact resolution) |
+| `lint-vault` | Agent / host | JSON | Cross-file integrity (links, orphans, stale, source-artifact resolution, untagged, dense) |
 
 The agent-facing trio (`memory-context`, `memory-write`, `memory-search`)
 is the entire interface a normal agent needs. Maintenance binaries are
@@ -1113,7 +1115,7 @@ agent-memory/
 │   ├── memory-promote/       # host: auto-promotion pass
 │   ├── memory-reindex/       # host: regenerate indices + constraints summary
 │   ├── memory-synthesize/    # host/Librarian: synthesis page scaffold
-│   ├── memory-suggest-patterns/ # host/Librarian: pattern candidates
+│   ├── memory-tag/           # Librarian: tag taxonomy management
 │   ├── memory-curate/        # Librarian: high-stakes inbox structuring
 │   ├── lint-note/            # single-file validation
 │   └── lint-vault/           # cross-file checks
@@ -1171,10 +1173,10 @@ memory-write \
   --type=<observation|pattern|constraint|decision|assumption> \
   --title=<...> \
   (--new-claim | --update=<slug> | --contest=<slug>) \
-  [--project=<name>] [--domain=<a,b>] [--tags=<x,y>] \
+  [--project=<name>] [--domain=<a,b>] \
   [--source-artifact=<path-or-url>] \
   [--confidence=<low|medium|high>] \
-  --body=<file-or-stdin>
+  [--body=@<file> | --body-inline=<text> | (stdin by default)]
 ```
 
 Returns:
@@ -1182,7 +1184,10 @@ Returns:
 {
   "written": "_inbox/2026-04-24-foo.md",
   "log_entry": "## [2026-04-24 10:13] write | observation | foo | by:research/analyst-a",
-  "requires_human_review": false
+  "requires_human_review": false,
+  "warnings": [
+    {"type": "unresolved-link", "link": "[[bar]]", "message": "target note does not exist; will block promotion until resolved"}
+  ]
 }
 ```
 
@@ -1198,10 +1203,12 @@ Or, on similarity hit without a flag:
 }
 ```
 
-Side effects (always): assemble frontmatter, assign TTL, canonicalize tags,
-run `lint-note`, write inbox file, append to `_meta/log.md`. For
-`--update` against an `observation`/`pattern`/`synthesis` target, the
-edit is applied in place and no inbox file is produced.
+Side effects (always): assemble frontmatter, assign TTL, run `lint-note`,
+write inbox file, append to `_meta/log.md`. For `--update` against an
+`observation`/`pattern`/`synthesis` target, the edit is applied in place
+and no inbox file is produced. Unresolved `[[wiki-links]]` in the body are
+reported in the `warnings` array but do not block the write; they block
+promotion.
 
 #### `memory-search`
 
@@ -1228,6 +1235,10 @@ Runs through `_inbox/` and applies the promotion table from §5.5:
   (issued by the human after `memory-curate` review).
 - `synthesis`: not produced via inbox; not handled here.
 
+For all types: **refuses to promote any note with unresolved `[[wiki-links]]`
+in its body**. The agent is notified at write time via the `warnings` array;
+promotion is the hard gate.
+
 Writes a promotion line to `_meta/log.md` for every action.
 
 Intended invocation: `session-end` hook (where available), nightly cron,
@@ -1241,6 +1252,22 @@ Deterministically regenerates `_index-{project}.md` and
 `epistemic-type: constraint` notes. Idempotent. Replaces the entire
 "Librarian maintains the indices" loop with a binary that runs in milliseconds.
 
+#### `memory-tag` *(Librarian-only)*
+
+Tag taxonomy management. The Librarian is the only agent that calls this.
+Agents do not supply tags when writing notes; tags are assigned after promotion.
+
+```bash
+memory-tag --assign --slug=<x> --tags=<a,b>          # assign tags to an existing note
+memory-tag --accept <tag> [--alias=<x,y>]            # add tag to taxonomy
+memory-tag --reject <tag> [--canonical=<existing>]   # reject; optionally redirect to existing tag
+memory-tag --list-untagged                           # list promoted notes with no tags
+```
+
+All operations update `_meta/tag-taxonomy.md` and append a log entry to
+`_meta/log.md`. The Librarian runs `--list-untagged` on its maintenance pass
+to find notes needing tags, then calls `--assign` for each one.
+
 #### `memory-synthesize <entity>`
 
 Given an entity slug or tag, gathers all `status: verified` notes that
@@ -1250,14 +1277,6 @@ section (deterministically composed), backlink graph, gap markers. In
 to fill with prose. In `--refresh` mode it updates only the
 deterministic sections of an existing synthesis page, leaving the prose
 untouched.
-
-#### `memory-suggest-patterns`
-
-Clusters recent (`--days=30`) `observation` notes by shared domain and
-tag overlap; emits JSON groupings of 2+ notes that look like they may
-corroborate a pattern. The Librarian (or human) reviews and uses
-`memory-write --type=pattern` to draft from each accepted cluster. The
-tool itself never writes pattern notes — drafting requires LLM judgment.
 
 #### `memory-curate` *(Librarian-only)*
 
@@ -1312,11 +1331,14 @@ and `memory-promote`.
 
 ```bash
 lint-vault                       # all checks
-lint-vault --links               # unresolved wikilinks
+lint-vault --links               # unresolved wikilinks (notes/ and _inbox/)
 lint-vault --orphans             # notes not referenced from any index
 lint-vault --stale               # notes where review-by < today
 lint-vault --source-artifacts    # source-artifact paths/URLs that no longer resolve
 lint-vault --deprecated-no-link  # status: deprecated without a forward link
+lint-vault --untagged            # promoted notes in notes/ with no tags
+lint-vault --contested           # any files present in _contested/
+lint-vault --dense               # tag+domain combos with 5+ notes and no synthesis page
 ```
 
 Output: JSON array of findings. Exit 0 if clean, 1 if any findings.
@@ -1366,8 +1388,9 @@ Priority order (highest to lowest):
 | Session start | `memory-context` | Agent (one tool call) |
 | During work | `memory-search`, `memory-write` | Agent, on demand |
 | Session end | `memory-promote`, `memory-reindex` | Host hook / cron / human — **no agent involvement** |
-| Daily / weekly | `lint-vault`, `memory-suggest-patterns` | Cron or human |
-| On escalation | `memory-curate`, Librarian invocation | Tool returns `requires_llm: true`, or human invokes |
+| Log threshold crossed | Librarian maintenance pass: tag untagged notes, detect patterns, review synthesis gaps | Host/cron (log line-count check) |
+| Daily / weekly | `lint-vault` | Cron or human |
+| On escalation | `memory-curate`, Librarian invocation | `requires-human-review: true` in `_inbox/`, `_contested/` non-empty, or human |
 | On demand | `memory-synthesize`, `agent-memory backup` | Human |
 
 ---
@@ -1380,24 +1403,28 @@ All questions from the initial design phase are closed.
 |---|---|
 | Vault location | User-prompted during `agent-memory init`; default `~/.local/share/agent-memory` |
 | Cross-project scope | Cross-project and cross-agent from the start; all classification in frontmatter |
-| Wikilinks | Live `[[wiki-links]]` written directly by agents; unresolved links acceptable |
+| Wikilinks | Live `[[wiki-links]]` written directly by agents; unresolved links reported as warnings by `memory-write`, hard-blocked at promotion by `memory-promote`; `lint-vault --links` covers both `notes/` and `_inbox/` |
 | Epistemic types | Six types: observation, pattern, constraint, decision, assumption, synthesis |
 | HITL scope | `constraint` and `decision` only; all others auto-promote on TTL expiry or corroboration |
 | Decision records | Vault-native; no separate ADR layer or reconciliation protocol. External decision records (if a project keeps them) are cited as `source-artifact`. |
 | Static-tooling principle | Tool owns form, agent owns content; all deterministic work lives in Go binaries |
-| Log file | `_meta/log.md`, append-only, written by tools (`memory-write`, `memory-promote`), never by agents |
+| Tag assignment | Agents do not supply tags; tags are assigned by the Librarian on its maintenance pass using `memory-tag` |
+| Log file | `_meta/log.md`, append-only, written by tools (`memory-write`, `memory-promote`, `memory-tag`), never by agents |
 | Index maintenance | `memory-reindex` regenerates from frontmatter scan; not Librarian work |
 | Promotion | `memory-promote` runs out-of-session (hook/cron/human); not Librarian work |
-| Librarian role | Escalation handler only — high-stakes review, supersession of high-stakes notes, prose drafting for synthesis/pattern, contested resolution |
+| Librarian role | Tagging, pattern detection, synthesis prose, supersession of high-stakes notes, high-stakes inbox review, contested resolution |
+| Librarian triggers | `requires-human-review: true` in `_inbox/`; `_contested/` non-empty; log-size threshold; human request. No dynamic `requires_llm` signal. |
+| Pattern detection | Librarian task using LLM judgment on its maintenance pass; no deterministic binary |
+| Synthesis triggers | Log-size threshold (Librarian maintenance pass); `lint-vault --dense` (note density); human request |
 | Librarian placement | Standalone global agent (e.g. `~/.config/opencode/agent/librarian.md`); no team manifest |
 | Agent-framework coupling | Design is framework-agnostic; only the Librarian role is defined here |
 | Harness hooks | Agent-instruction baseline only; hooks documented as optional enhancements |
-| Tooling | Go module `github.com/michaelin/agent-memory`; agent-facing trio + maintenance + lint binaries |
+| Tooling | Go module `github.com/michaelin/agent-memory`; agent-facing trio + maintenance + lint binaries; `memory-tag` for Librarian taxonomy work |
 | Git in vault | No git; vault is plain files; durability via `agent-memory backup` |
 | `git init` during init | Dropped; `init` is a plain file/folder scaffold from embedded templates |
 | Module path | `github.com/michaelin/agent-memory` (public repo) |
 | Memory consolidation | `memory-reindex` covers deterministic parts; richer consolidation deferred |
-| Dreaming / pattern promotion | `memory-suggest-patterns` provides deterministic clustering; final drafting deferred to Librarian |
+| Dreaming / pattern promotion | Librarian task on maintenance pass; no deterministic binary |
 
 ---
 
