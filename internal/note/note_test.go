@@ -15,7 +15,7 @@ title: My Note
 created: "2026-01-01"
 updated: "2026-05-21"
 review-by: "2026-12-31"
-status: active
+status: verified
 confidence: high
 epistemic-type: observation
 scope: project
@@ -47,7 +47,7 @@ This is the body of the note.
 			Expect(fm.Created).To(Equal("2026-01-01"))
 			Expect(fm.Updated).To(Equal("2026-05-21"))
 			Expect(fm.ReviewBy).To(Equal("2026-12-31"))
-			Expect(fm.Status).To(Equal("active"))
+			Expect(fm.Status).To(Equal("verified"))
 			Expect(fm.Confidence).To(Equal("high"))
 			Expect(fm.EpistemicType).To(Equal("observation"))
 			Expect(fm.Scope).To(Equal("project"))
