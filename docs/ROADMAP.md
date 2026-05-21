@@ -246,6 +246,13 @@ Each increment is a complete vertical slice: design → research → structure �
 
 > **Deferred:** Postponed until the vault has enough data to validate whether a search command is the right interface vs. direct read access. The two-phase retrieval model may be over-engineered for small vaults. Revisit after real usage.
 
+> **Note on scope if un-deferred:** If this increment is reinstated, the scope
+> below will be revised. The current implementation model (described in §9.3 of
+> the design doc) uses a simple frontmatter/tag filter — not the two-phase
+> retrieval model described in the Scope section below. Any un-deferral work
+> should start from the simple filter model and introduce two-phase retrieval
+> only if vault growth data justifies it.
+
 **Goal:** Implement the skill and static tool so agents can find relevant notes without loading everything.
 
 **What becomes possible after this increment:**

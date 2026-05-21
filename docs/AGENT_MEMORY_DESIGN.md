@@ -123,9 +123,7 @@ translation of this:
 
 The hard token budgets (600 for Core, 300 per index) are not arbitrary.
 They are sized to leave the majority of the context window free for actual
-work. The two-phase retrieval pattern (discover via frontmatter grep, then
-selectively read bodies) enforces this discipline mechanically — agents
-cannot accidentally load more than they need.
+work. The simple frontmatter/tag filter model (discover via frontmatter fields and tags, then read files directly) enforces this discipline mechanically — agents cannot accidentally load more than they need. A two-phase retrieval pattern (Phase 1 = frontmatter-only discovery, Phase 2 = selective body read with a hard cap) is a planned enhancement for when vault size makes it necessary; see §4.3 and §9.3.
 
 ---
 
@@ -453,6 +451,12 @@ read a file can use them. No framework-specific features required.
 
 ### 4.3 Two-phase retrieval
 
+> **Deferred.** The current implementation of `agent-memory search` uses a simple
+> frontmatter/tag filter model: agents filter by project, domain, type, and tag,
+> then read note files directly for full content. Two-phase retrieval is deferred
+> until the vault has enough data to validate whether the additional complexity is
+> warranted. See §9.3 for the current implementation.
+
 **The problem:** Fetching full note bodies for every potentially relevant note
 is expensive and causes context overflow. Fetching nothing until explicitly
 asked means the agent misses relevant knowledge. Two-phase retrieval is the
@@ -496,7 +500,7 @@ becomes harder to navigate and more expensive to search.
 | Consolidation concern | Tool that handles it |
 |---|---|
 | Update index notes; remove deprecated/superseded references | `agent-memory reindex` |
-| Resolve stale `_inbox/` items past TTL | `agent-memory promote` (auto-promote on TTL) and `lint-vault --stale` |
+| Promote validated `_inbox/` items to `notes/` | `agent-memory promote` (called by the Librarian; no TTL-based auto-promote — `review-by` is a staleness indicator only) and `lint-vault --stale` |
 | Identify pattern candidates from corroborating observations | Librarian maintenance pass (LLM judgment; no binary) |
 | Detect notes not referenced from any index | `lint-vault --orphans` |
 | Detect deprecated notes lacking a forward link | `lint-vault --deprecated-no-link` |
@@ -1023,12 +1027,14 @@ bounded prose drafting or a single recommendation to the human. A second
 Librarian instance adds latency without changing the outcome. Upstream
 quorum (where used) has already established the underlying claim.
 
-**Placement:** The Librarian is a standalone global agent definition,
-framework-portable. In OpenCode, this is
-`~/.config/opencode/agent/librarian.md`; in pi or other frameworks, the
-equivalent global agent location. It is never tied to a team manifest.
-A corresponding Librarian skill is defined so that user agents can
-invoke it as the last step of their workflow.
+**Placement:** The Librarian is implemented as a Claude Code skill that user
+agents invoke as the last step of their workflow. This is the primary interface:
+skill invocation, not a standalone agent. There is no standalone agent definition
+file and no team manifest entry for the Librarian (see §10: "No standalone agent
+or team manifest"). If a backing agent definition file is introduced in a future
+increment (e.g., to support non-skill invocation paths in other frameworks), this
+section will be updated to name it explicitly. For now, the skill definition is
+the sole artifact.
 
 **Permissions:**
 - `read`: allow (vault path)
@@ -1168,7 +1174,7 @@ command.
 | `agent-memory instructions` | Human / agent setup | Print agent configuration blurb to stdout |
 | `agent-memory write-note` | Agent | Single entry point for agent writes; enforces protocol deterministically |
 | `agent-memory context` | Agent | Bundled session-start context (replaces multi-step session-init workflow) |
-| `agent-memory search` | Agent | Two-phase retrieval (Phase 1 = frontmatter discovery; Phase 2 = selective body read) |
+| `agent-memory search` | Agent | Simple frontmatter/tag filter for note discovery; returns metadata for matching notes (two-phase deferred — see §9.3) |
 | `agent-memory promote` | Host (cron / hook / human) | Auto-promote inbox notes past TTL or with corroboration; no LLM |
 | `agent-memory reindex` | Host | Regenerate `_index-*.md` and `_meta/constraints-summary.md` from frontmatter scan |
 | `agent-memory synthesize` | Host or Librarian | Build/refresh a synthesis page scaffold for an entity |
@@ -1495,7 +1501,8 @@ path serves as the catch-all for invocations outside any project.
 |---|---|---|
 | Session start | `agent-memory context` | Agent (one tool call) |
 | During work | `agent-memory search`, `agent-memory write-note` | Agent, on demand |
-| Session end | `agent-memory promote`, `agent-memory reindex` | Host hook / cron / human — **no agent involvement** |
+| Session end (current model) | Librarian skill invocation: validate, promote, deduplicate inbox notes | User agent (last step of workflow) |
+| Session end (future: decoupled model) | `agent-memory promote`, `agent-memory reindex` | Host hook / cron / human — **no agent involvement** |
 | Log threshold crossed | Librarian maintenance pass: tag untagged notes, detect patterns, review synthesis gaps | Host/cron (log line-count check) |
 | Daily / weekly | `agent-memory lint-vault` | Cron or human |
 | On escalation | `agent-memory curate`, Librarian invocation | `requires-human-review: true` in `_inbox/`, `_contested/` non-empty, or human |
