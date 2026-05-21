@@ -63,6 +63,10 @@ func Slug(title string) string {
 	s = reConsecutiveHyphens.ReplaceAllString(s, "-")
 	s = strings.Trim(s, "-")
 
+	if s == "" {
+		s = "note"
+	}
+
 	if len(s) > 60 {
 		s = s[:60]
 		s = strings.TrimRight(s, "-")

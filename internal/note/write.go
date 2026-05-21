@@ -135,20 +135,30 @@ func Write(opts WriteOptions) (WriteResult, error) {
 
 	// Step 6: Generate path with collision handling.
 	slug := Slug(opts.Title)
+
+	// Ensure _inbox/ exists before resolveInboxPath attempts O_EXCL creation.
+	inboxDir := filepath.Join(opts.VaultPath, "_inbox")
+	if err := os.MkdirAll(inboxDir, 0o755); err != nil {
+		return WriteResult{}, fmt.Errorf("create _inbox dir: %w", err)
+	}
+
 	path, err := resolveInboxPath(opts.VaultPath, today, slug)
 	if err != nil {
 		return WriteResult{}, fmt.Errorf("resolve inbox path: %w", err)
 	}
 
+	// Clean up placeholder if write fails.
+	writeSucceeded := false
+	defer func() {
+		if !writeSucceeded {
+			_ = os.Remove(path)
+		}
+	}()
+
 	// Step 7: Serialize and write.
 	data, err := Serialize(n)
 	if err != nil {
 		return WriteResult{}, fmt.Errorf("serialize note: %w", err)
-	}
-
-	inboxDir := filepath.Join(opts.VaultPath, "_inbox")
-	if err := os.MkdirAll(inboxDir, 0o755); err != nil {
-		return WriteResult{}, fmt.Errorf("create _inbox dir: %w", err)
 	}
 
 	if err := os.WriteFile(path, data, 0o644); err != nil {
@@ -160,6 +170,7 @@ func Write(opts WriteOptions) (WriteResult, error) {
 		return WriteResult{}, fmt.Errorf("append log: %w", err)
 	}
 
+	writeSucceeded = true
 	return WriteResult{
 		Status:   "written",
 		Path:     path,
@@ -187,6 +198,9 @@ func findSimilarNotes(vaultPath string, incomingTokens []string) ([]SimilarNote,
 		}
 
 		for _, entry := range entries {
+			if entry.Type()&os.ModeSymlink != 0 {
+				continue
+			}
 			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
 				continue
 			}
@@ -223,6 +237,14 @@ func resolveWikilinks(vaultPath, body string) []string {
 	links := ExtractWikilinks(body)
 	var warnings []string
 
+	// Read _inbox/ entries once, outside the per-link loop (M-3).
+	inboxDir := filepath.Join(vaultPath, "_inbox")
+	inboxEntries, err := os.ReadDir(inboxDir)
+	if err != nil && !os.IsNotExist(err) {
+		warnings = append(warnings, fmt.Sprintf("warning: could not read _inbox dir: %v", err))
+		return warnings
+	}
+
 	for _, link := range links {
 		slug := Slug(link)
 
@@ -233,15 +255,14 @@ func resolveWikilinks(vaultPath, body string) []string {
 		}
 
 		// Check _inbox/*-{slug}.md (any file ending with -{slug}.md)
-		inboxDir := filepath.Join(vaultPath, "_inbox")
-		entries, err := os.ReadDir(inboxDir)
 		found := false
-		if err == nil {
-			for _, e := range entries {
-				if strings.HasSuffix(e.Name(), "-"+slug+".md") {
-					found = true
-					break
-				}
+		for _, e := range inboxEntries {
+			if e.Type()&os.ModeSymlink != 0 {
+				continue
+			}
+			if strings.HasSuffix(e.Name(), "-"+slug+".md") {
+				found = true
+				break
 			}
 		}
 		if found {
@@ -254,21 +275,29 @@ func resolveWikilinks(vaultPath, body string) []string {
 	return warnings
 }
 
-// resolveInboxPath returns the full path for a new inbox file, appending -2,
-// -3, etc. if the base name already exists.
+// resolveInboxPath returns the full path for a new inbox file by atomically
+// creating it with O_EXCL to avoid TOCTOU races. It appends -2, -3, etc. on
+// collision, up to 100 attempts.
 func resolveInboxPath(vaultPath, date, slug string) (string, error) {
 	inboxDir := filepath.Join(vaultPath, "_inbox")
 	base := date + "-" + slug
-	candidate := filepath.Join(inboxDir, base+".md")
 
-	if _, err := os.Stat(candidate); os.IsNotExist(err) {
-		return candidate, nil
-	}
+	for i := 0; i <= 100; i++ {
+		var candidate string
+		if i == 0 {
+			candidate = filepath.Join(inboxDir, base+".md")
+		} else {
+			candidate = filepath.Join(inboxDir, fmt.Sprintf("%s-%d.md", base, i+1))
+		}
 
-	for i := 2; i <= 999; i++ {
-		candidate = filepath.Join(inboxDir, fmt.Sprintf("%s-%d.md", base, i))
-		if _, err := os.Stat(candidate); os.IsNotExist(err) {
+		f, err := os.OpenFile(candidate, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+		if err == nil {
+			// Successfully claimed the file; close it — Write will overwrite via WriteFile.
+			_ = f.Close()
 			return candidate, nil
+		}
+		if !os.IsExist(err) {
+			return "", fmt.Errorf("probe inbox path: %w", err)
 		}
 	}
 
@@ -295,11 +324,13 @@ func appendLog(vaultPath, epistemicType, slug, sourceAgent string) error {
 	if err != nil {
 		return fmt.Errorf("open log file: %w", err)
 	}
-	defer f.Close() //nolint:errcheck // best-effort close on append-only file
 
 	if _, err := f.WriteString(entry); err != nil {
+		_ = f.Close()
 		return fmt.Errorf("write log entry: %w", err)
 	}
-
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("close log file: %w", err)
+	}
 	return nil
 }

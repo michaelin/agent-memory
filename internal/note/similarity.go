@@ -13,14 +13,17 @@ var stopWords = map[string]struct{}{
 }
 
 // NormalizeTokens lowercases text, splits on whitespace, strips punctuation
-// from each token, and removes stop words.
+// and non-ASCII characters from each token, and removes stop words.
 // Stop words: a, an, the, is, are, was, were, in, on, of, to, for, and, or, but, with, by, at, from
 func NormalizeTokens(text string) []string {
 	fields := strings.Fields(strings.ToLower(text))
 	result := make([]string, 0, len(fields))
 	for _, tok := range fields {
-		// Keep only alphanumeric characters.
+		// Keep only ASCII alphanumeric characters (matches Slug behavior).
 		cleaned := strings.Map(func(r rune) rune {
+			if r > unicode.MaxASCII {
+				return -1
+			}
 			if unicode.IsLetter(r) || unicode.IsDigit(r) {
 				return r
 			}

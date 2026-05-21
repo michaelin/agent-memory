@@ -50,7 +50,7 @@ Required flags: --type, --title, --domain, --scope, --source-artifact, --confide
 			if err != nil {
 				cmd.SilenceUsage = true
 				if jsonOutput {
-					out, _ := json.Marshal(map[string]string{"status": "error", "error": err.Error()})
+					out, _ := json.Marshal(map[string]string{"status": "error", "error": "file not readable"})
 					fmt.Println(string(out))
 					cmd.SilenceErrors = true
 					return fmt.Errorf("%w", err)
@@ -63,7 +63,7 @@ Required flags: --type, --title, --domain, --scope, --source-artifact, --confide
 			if err != nil {
 				cmd.SilenceUsage = true
 				if jsonOutput {
-					out, _ := json.Marshal(map[string]string{"status": "error", "error": err.Error()})
+					out, _ := json.Marshal(map[string]string{"status": "error", "error": "vault not found"})
 					fmt.Println(string(out))
 					cmd.SilenceErrors = true
 					return fmt.Errorf("%w", err)
@@ -90,7 +90,7 @@ Required flags: --type, --title, --domain, --scope, --source-artifact, --confide
 			if err != nil {
 				cmd.SilenceUsage = true
 				if jsonOutput {
-					out, _ := json.Marshal(map[string]string{"status": "error", "error": err.Error()})
+					out, _ := json.Marshal(map[string]string{"status": "error", "error": "internal error"})
 					fmt.Println(string(out))
 					cmd.SilenceErrors = true
 					return fmt.Errorf("%w", err)
@@ -98,23 +98,23 @@ Required flags: --type, --title, --domain, --scope, --source-artifact, --confide
 				return err
 			}
 
-			if jsonOutput {
+		if jsonOutput {
 				out, merr := json.Marshal(result)
 				if merr != nil {
 					cmd.SilenceUsage = true
 					return fmt.Errorf("marshal JSON: %w", merr)
 				}
 				fmt.Println(string(out))
-			if result.Status == "refused" {
-				cmd.SilenceUsage = true
-				cmd.SilenceErrors = true
-				return fmt.Errorf("note refused: %s", result.Reason)
+				if result.Status == "refused" {
+					cmd.SilenceUsage = true
+					cmd.SilenceErrors = true
+					return fmt.Errorf("note refused: %s", result.Reason)
+				}
+				return nil
 			}
-			return nil
-		}
 
-		// Human-readable output.
-		if result.Status == "written" {
+			// Human-readable output.
+			if result.Status == "written" {
 				fmt.Printf("✓ Written: %s\n", result.Path)
 				return nil
 			}
@@ -140,6 +140,9 @@ Required flags: --type, --title, --domain, --scope, --source-artifact, --confide
 	cmd.Flags().StringVar(&confidenceFlag, "confidence", "", "Confidence level (low, medium, high)")
 	cmd.Flags().StringSliceVar(&tagsFlag, "tags", nil, "Additional tags (comma-separated or repeated flag)")
 	cmd.Flags().BoolVar(&forceFlag, "force", false, "Bypass similarity refusal and write unconditionally")
+
+	_ = cmd.MarkFlagRequired("type")
+	_ = cmd.MarkFlagRequired("title")
 
 	return cmd
 }

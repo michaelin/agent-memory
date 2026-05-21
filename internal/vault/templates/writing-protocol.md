@@ -99,8 +99,8 @@ The tool sets the following fields automatically — the agent does not need to 
 | `created` | Today's date (YYYY-MM-DD) |
 | `updated` | Today's date (YYYY-MM-DD) |
 | `status` | `inbox` |
-| `review-by` | 90 days from today (YYYY-MM-DD) |
-| `requires-human-review` | `true` |
+| `review-by` | TTL from today: assumption=30d, observation=90d, pattern=180d, constraint/decision=365d |
+| `requires-human-review` | `true` (only set for `constraint` and `decision` types) |
 | `source-agent` | `agent-memory-cli` (if `--source-agent` is not provided) |
 
 ### Similarity Check
