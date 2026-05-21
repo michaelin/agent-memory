@@ -111,11 +111,7 @@ func Promote(vaultPath, slug string, confirmed bool) (PromoteResult, error) {
 		return errResult(fmt.Errorf("confirmation required for constraint/decision notes; pass --confirmed"))
 	}
 
-	// Step 7: collision check.
 	notesPath := filepath.Join(vaultPath, "notes", slug+".md")
-	if _, err := os.Stat(notesPath); err == nil {
-		return errResult(fmt.Errorf("collision: %s already exists in notes/", slug))
-	}
 
 	// Step 8: update frontmatter.
 	n.Frontmatter.Status = "verified"
@@ -129,19 +125,33 @@ func Promote(vaultPath, slug string, confirmed bool) (PromoteResult, error) {
 	if err := os.MkdirAll(filepath.Join(vaultPath, "notes"), 0o755); err != nil {
 		return errResult(fmt.Errorf("create notes dir: %w", err))
 	}
-	if err := os.WriteFile(notesPath, serialized, 0o644); err != nil {
+	f, err := os.OpenFile(notesPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err != nil {
+		if os.IsExist(err) {
+			return errResult(fmt.Errorf("collision: %s already exists in notes/", slug))
+		}
+		return errResult(fmt.Errorf("write notes file: %w", err))
+	}
+	if _, err := f.Write(serialized); err != nil {
+		f.Close()
+		_ = os.Remove(notesPath)
+		return errResult(fmt.Errorf("write notes file: %w", err))
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(notesPath)
 		return errResult(fmt.Errorf("write notes file: %w", err))
 	}
 
 	// Step 10: remove inbox file.
 	if err := os.Remove(inboxPath); err != nil {
-		// Best-effort cleanup: the note was written; log the removal failure.
+		// Rollback: remove the notes file we just wrote.
+		_ = os.Remove(notesPath)
 		return errResult(fmt.Errorf("remove inbox file: %w", err))
 	}
 
-	// Step 11: append log entry.
+	// Step 11: append log entry (best-effort — move already succeeded).
 	if err := AppendLog(vaultPath, "promote", n.Frontmatter.EpistemicType, slug, "librarian"); err != nil {
-		return errResult(fmt.Errorf("append log: %w", err))
+		fmt.Fprintf(os.Stderr, "warn: append log failed for promote %s: %v\n", slug, err)
 	}
 
 	// Step 12: return success.

@@ -158,4 +158,27 @@ This is the body of the note.
 			Expect(errors.Is(err, ErrNoFrontmatter)).To(BeTrue())
 		})
 	})
+
+	Context("backward compat — legacy epistemic-type keys", func() {
+		It("populates EpistemicType from epistemic-type: when type: is absent", func() {
+			content := []byte("---\ntitle: Legacy\nepistemic-type: observation\n---\nbody\n")
+			n, err := Parse(content)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(n.Frontmatter.EpistemicType).To(Equal("observation"))
+		})
+
+		It("populates EpistemicType from update-type: when type: and epistemic-type: are absent", func() {
+			content := []byte("---\ntitle: Legacy\nupdate-type: observation\n---\nbody\n")
+			n, err := Parse(content)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(n.Frontmatter.EpistemicType).To(Equal("observation"))
+		})
+
+		It("type: wins over epistemic-type: when both are present", func() {
+			content := []byte("---\ntitle: Both\ntype: constraint\nepistemic-type: observation\n---\nbody\n")
+			n, err := Parse(content)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(n.Frontmatter.EpistemicType).To(Equal("constraint"))
+		})
+	})
 })

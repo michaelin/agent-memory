@@ -41,6 +41,35 @@ type Frontmatter struct {
 	Tags                []string `yaml:"tags"`
 }
 
+// UnmarshalYAML implements yaml.Unmarshaler to provide backward compatibility
+// for legacy frontmatter keys. Priority: type > epistemic-type > update-type.
+func (f *Frontmatter) UnmarshalYAML(value *yaml.Node) error {
+	// Use an alias to avoid infinite recursion.
+	type FrontmatterAlias Frontmatter
+	var alias FrontmatterAlias
+	if err := value.Decode(&alias); err != nil {
+		return err
+	}
+	*f = Frontmatter(alias)
+
+	// If EpistemicType was populated by the canonical "type:" key, we're done.
+	if f.EpistemicType != "" {
+		return nil
+	}
+
+	// Check legacy keys via raw map decode.
+	var raw map[string]string
+	_ = value.Decode(&raw) // best-effort; ignore errors
+	if v, ok := raw["epistemic-type"]; ok && v != "" {
+		f.EpistemicType = v
+		return nil
+	}
+	if v, ok := raw["update-type"]; ok && v != "" {
+		f.EpistemicType = v
+	}
+	return nil
+}
+
 // ErrNoFrontmatter is returned by Parse when the content does not contain the
 // opening and closing "---" frontmatter delimiters.
 var ErrNoFrontmatter = errors.New("no frontmatter found")

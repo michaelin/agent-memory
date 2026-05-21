@@ -69,7 +69,6 @@ recording the superseding note slug in its frontmatter.`,
 	cmd.Flags().StringVar(&supersededBy, "superseded-by", "", "Slug of the note that supersedes this one")
 
 	_ = cmd.MarkFlagRequired("slug")
-	_ = cmd.MarkFlagRequired("superseded-by")
 
 	return cmd
 }

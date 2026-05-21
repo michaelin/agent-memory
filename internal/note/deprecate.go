@@ -7,6 +7,7 @@ import (
 	"time"
 )
 
+
 // DeprecateResult describes the outcome of a Deprecate call.
 type DeprecateResult struct {
 	Status       string `json:"status"`                  // "deprecated" or "error"
@@ -75,14 +76,16 @@ func Deprecate(vaultPath, slug, supersededBy string) (DeprecateResult, error) {
 
 	// Step 7: Remove the original from notes/.
 	if err := os.Remove(notePath); err != nil {
-		return DeprecateResult{Status: "error", Slug: slug, Error: err.Error()},
-			fmt.Errorf("remove original note: %w", err)
+		// Rollback: remove the _deprecated/ file we just wrote.
+		_ = os.Remove(destPath)
+		wrapped := fmt.Errorf("remove original note: %w", err)
+		return DeprecateResult{Status: "error", Slug: slug, Error: wrapped.Error()},
+			wrapped
 	}
 
-	// Step 8: Append log entry.
+	// Step 8: Append log entry (best-effort — move already succeeded).
 	if err := AppendLog(vaultPath, "deprecate", n.Frontmatter.EpistemicType, slug, "librarian"); err != nil {
-		return DeprecateResult{Status: "error", Slug: slug, Error: err.Error()},
-			fmt.Errorf("append log: %w", err)
+		fmt.Fprintf(os.Stderr, "warn: append log failed for deprecate %s: %v\n", slug, err)
 	}
 
 	// Step 9: Return success.
