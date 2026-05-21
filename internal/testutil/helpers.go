@@ -64,6 +64,34 @@ func WriteTestNote(t testing.TB, dir, filename, content string) string {
 	return path
 }
 
+// RunBinaryWithStdin runs the binary with args, feeding stdinContent to stdin,
+// and returns stdout, stderr, and exit code.
+func RunBinaryWithStdin(binPath, stdinContent string, args ...string) (stdout, stderr string, exitCode int) {
+	cmd := exec.Command(binPath, args...)
+	cmd.Stdin = bytes.NewBufferString(stdinContent)
+	var outBuf, errBuf bytes.Buffer
+	cmd.Stdout = &outBuf
+	cmd.Stderr = &errBuf
+
+	err := cmd.Run()
+	stdout = outBuf.String()
+	stderr = errBuf.String()
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			exitCode = exitErr.ExitCode()
+		} else {
+			exitCode = 1
+		}
+	}
+	return
+}
+
+// RunBinaryCmd returns a configured *exec.Cmd for the binary with args.
+// The caller may set Env, Dir, Stdin, etc. before calling Run or Output.
+func RunBinaryCmd(binPath string, args ...string) *exec.Cmd {
+	return exec.Command(binPath, args...)
+}
+
 func findModuleRoot() string {
 	dir, _ := os.Getwd()
 	for {
