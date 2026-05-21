@@ -297,7 +297,7 @@ var _ = Describe("agent-memory instructions", func() {
 		stdout, _, exitCode := testutil.RunBinary(binPath, "instructions")
 		Expect(exitCode).To(Equal(0))
 		Expect(stdout).To(HavePrefix("# Agent Memory"))
-		Expect(stdout).To(ContainSubstring("Writing to the vault is not yet enabled."))
+		Expect(stdout).To(ContainSubstring("write-note"))
 		Expect(stdout).To(ContainSubstring("--json"))
 	})
 })
