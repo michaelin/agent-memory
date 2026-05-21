@@ -19,5 +19,7 @@ func NewRootCmd() *cobra.Command {
 	cmd.AddCommand(newInstructionsCmd())
 	cmd.AddCommand(newLintNoteCmd())
 	cmd.AddCommand(newWriteNoteCmd())
+	cmd.AddCommand(newPromoteCmd())
+	cmd.AddCommand(newDeprecateCmd())
 	return cmd
 }
