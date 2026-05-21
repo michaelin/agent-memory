@@ -24,7 +24,9 @@ type LintResult struct {
 	Errors []LintError `json:"errors,omitempty"`
 }
 
-// Rules returns all registered lint rules in order.
+// Rules returns all lint rules for note frontmatter validation.
+// Rule IDs follow the NF### convention (e.g., NF001, NF002).
+// Each rule ID must be unique across all rules returned by this function.
 func Rules() []Rule {
 	return []Rule{
 		ruleNF001,
@@ -40,6 +42,12 @@ func Rules() []Rule {
 // Lint runs all registered rules against note and returns a LintResult.
 // Valid is true when no rule violations are found.
 func Lint(note *Note) *LintResult {
+	if note == nil {
+		return &LintResult{
+			Valid:  false,
+			Errors: []LintError{{Rule: "internal", Message: "note is nil"}},
+		}
+	}
 	var errs []LintError
 	for _, r := range Rules() {
 		for _, msg := range r.Check(note) {
@@ -126,10 +134,10 @@ var ruleNF003 = Rule{
 			valid []string
 		}
 		fields := []enumField{
-			{"status", n.Frontmatter.Status, []string{"draft", "active", "archived", "deprecated"}},
-			{"epistemic-type", n.Frontmatter.EpistemicType, []string{"observation", "inference", "synthesis", "hypothesis", "procedure"}},
+			{"status", n.Frontmatter.Status, []string{"inbox", "verified", "deprecated", "contested", "superseded"}},
+			{"epistemic-type", n.Frontmatter.EpistemicType, []string{"observation", "pattern", "constraint", "decision", "assumption", "synthesis"}},
 			{"confidence", n.Frontmatter.Confidence, []string{"low", "medium", "high"}},
-			{"scope", n.Frontmatter.Scope, []string{"project", "global"}},
+			{"scope", n.Frontmatter.Scope, []string{"project", "cross-project"}},
 		}
 		var msgs []string
 		for _, f := range fields {
@@ -241,12 +249,37 @@ func containsString(slice []string, s string) bool {
 
 // bodyHasSection reports whether body contains a line that starts with heading.
 // For "# " (h1 detection) we check for any line starting with "# " (one hash
-// followed by a space), which matches any h1 heading.
+// followed by a space), which matches any h1 heading. Trailing whitespace on
+// each line is trimmed before matching so that "##  Evidence" (double space)
+// still matches "## Evidence".
 func bodyHasSection(body, heading string) bool {
 	for _, line := range strings.Split(body, "\n") {
-		if strings.HasPrefix(line, heading) {
+		// Normalize runs of spaces after the leading hashes so that
+		// "##  Evidence" matches the expected heading "## Evidence".
+		normalized := normalizeHeadingSpaces(line)
+		if strings.HasPrefix(normalized, heading) {
 			return true
 		}
 	}
 	return false
+}
+
+// normalizeHeadingSpaces collapses multiple spaces between the leading '#'
+// characters and the heading text into a single space, matching the canonical
+// Markdown heading format.
+func normalizeHeadingSpaces(line string) string {
+	// Count leading '#' characters.
+	i := 0
+	for i < len(line) && line[i] == '#' {
+		i++
+	}
+	if i == 0 {
+		return line
+	}
+	// Trim any whitespace between hashes and text, then re-join with one space.
+	rest := strings.TrimLeft(line[i:], " \t")
+	if rest == "" {
+		return line[:i]
+	}
+	return line[:i] + " " + rest
 }

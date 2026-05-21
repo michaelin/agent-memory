@@ -13,7 +13,7 @@ func validFrontmatter() Frontmatter {
 		Title:          "Test Note",
 		Created:        "2026-01-01",
 		Updated:        "2026-05-21",
-		Status:         "active",
+		Status:         "verified",
 		Confidence:     "high",
 		EpistemicType:  "observation",
 		Scope:          "project",
@@ -104,5 +104,14 @@ var _ = Describe("Lint / NF001", func() {
 			}
 			Expect(ids).To(ContainElement("NF001"))
 		})
+	})
+})
+
+var _ = Describe("Lint / nil note", func() {
+	It("returns invalid result when note is nil", func() {
+		result := Lint(nil)
+		Expect(result.Valid).To(BeFalse())
+		Expect(result.Errors).To(HaveLen(1))
+		Expect(result.Errors[0].Rule).To(Equal("internal"))
 	})
 })

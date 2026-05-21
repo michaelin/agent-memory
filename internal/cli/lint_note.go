@@ -26,12 +26,17 @@ func newLintNoteCmd() *cobra.Command {
 							{Rule: "read", Message: err.Error()},
 						},
 					}
-					out, _ := json.Marshal(result)
+					out, merr := json.Marshal(result)
+					if merr != nil {
+						cmd.SilenceUsage = true
+						return fmt.Errorf("marshal JSON: %w", merr)
+					}
 					fmt.Println(string(out))
 					cmd.SilenceUsage = true
 					cmd.SilenceErrors = true
 					return fmt.Errorf("%w", err)
 				}
+				cmd.SilenceUsage = true
 				return err
 			}
 
@@ -44,12 +49,17 @@ func newLintNoteCmd() *cobra.Command {
 							{Rule: "parse", Message: err.Error()},
 						},
 					}
-					out, _ := json.Marshal(result)
+					out, merr := json.Marshal(result)
+					if merr != nil {
+						cmd.SilenceUsage = true
+						return fmt.Errorf("marshal JSON: %w", merr)
+					}
 					fmt.Println(string(out))
 					cmd.SilenceUsage = true
 					cmd.SilenceErrors = true
 					return fmt.Errorf("%w", err)
 				}
+				cmd.SilenceUsage = true
 				return err
 			}
 
@@ -58,7 +68,8 @@ func newLintNoteCmd() *cobra.Command {
 			if jsonOutput {
 				out, err := json.Marshal(result)
 				if err != nil {
-					return err
+					cmd.SilenceUsage = true
+					return fmt.Errorf("marshal JSON: %w", err)
 				}
 				fmt.Println(string(out))
 				if !result.Valid {
@@ -79,6 +90,7 @@ func newLintNoteCmd() *cobra.Command {
 			for _, e := range result.Errors {
 				fmt.Fprintf(os.Stdout, "  %s: %s\n", e.Rule, e.Message)
 			}
+			cmd.SilenceUsage = true
 			return fmt.Errorf("note has %d error(s)", len(result.Errors))
 		},
 	}

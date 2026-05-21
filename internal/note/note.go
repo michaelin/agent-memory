@@ -54,44 +54,36 @@ const delimiter = "---"
 // Returns ErrNoFrontmatter if the content does not begin with a "---"
 // delimiter followed by a closing "---" delimiter. Returns a wrapped error if
 // the YAML is malformed.
+//
+// CRLF line endings are normalized to LF before parsing. Delimiter lines are
+// matched exactly (after trimming trailing whitespace) so that "---notyaml"
+// is not treated as a valid delimiter.
 func Parse(content []byte) (*Note, error) {
-	s := string(content)
+	// Normalize CRLF to LF so Windows-style line endings parse identically.
+	s := strings.ReplaceAll(string(content), "\r\n", "\n")
 
-	// The file must start with "---\n" (or "---" at EOF, though that is
-	// degenerate). We look for the opening delimiter on the very first line.
-	if !strings.HasPrefix(s, delimiter) {
+	lines := strings.Split(s, "\n")
+
+	// The first line must be exactly "---" (after trimming trailing whitespace).
+	if len(lines) == 0 || strings.TrimRight(lines[0], " \t") != delimiter {
 		return nil, ErrNoFrontmatter
 	}
 
-	// Advance past the opening "---".
-	rest := s[len(delimiter):]
-	// Consume an optional newline immediately after the opening delimiter.
-	rest = strings.TrimPrefix(rest, "\n")
-
-	// Find the closing "---".
-	idx := strings.Index(rest, "\n"+delimiter)
-	if idx == -1 {
-		// Also handle the case where the closing delimiter is at the very start
-		// (empty frontmatter with no leading newline consumed above).
-		if strings.HasPrefix(rest, delimiter) {
-			idx = 0
-		} else {
-			return nil, ErrNoFrontmatter
+	// Find the closing delimiter: a line that is exactly "---" (after trimming
+	// trailing whitespace), starting from line index 1.
+	closingIdx := -1
+	for i := 1; i < len(lines); i++ {
+		if strings.TrimRight(lines[i], " \t") == delimiter {
+			closingIdx = i
+			break
 		}
 	}
-
-	var yamlBlock string
-	var body string
-
-	if strings.HasPrefix(rest, delimiter) {
-		// Opening "---" was immediately followed by closing "---" (empty FM).
-		yamlBlock = ""
-		body = rest[len(delimiter):]
-	} else {
-		yamlBlock = rest[:idx]
-		afterClose := rest[idx+1+len(delimiter):]
-		body = afterClose
+	if closingIdx == -1 {
+		return nil, ErrNoFrontmatter
 	}
+
+	yamlBlock := strings.Join(lines[1:closingIdx], "\n")
+	body := strings.Join(lines[closingIdx+1:], "\n")
 
 	var fm Frontmatter
 	dec := yaml.NewDecoder(bytes.NewBufferString(yamlBlock))

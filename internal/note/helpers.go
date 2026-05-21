@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-var placeholderAngle = regexp.MustCompile(`^<.*>$`)
+var placeholderAngle = regexp.MustCompile(`^<[^>]+>$`)
 
 // IsPlaceholder reports whether value is a placeholder that has not been
 // filled in. It returns true for:

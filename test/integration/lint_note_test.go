@@ -15,10 +15,10 @@ const validNoteContent = `---
 title: Test Note
 created: 2026-01-01
 updated: 2026-01-01
-status: active
+status: verified
 confidence: high
 epistemic-type: observation
-scope: global
+scope: cross-project
 source-agent: test-agent
 source-artifact: test-artifact
 domain:
@@ -42,10 +42,10 @@ None.
 const missingTitleContent = `---
 created: 2026-01-01
 updated: 2026-01-01
-status: active
+status: verified
 confidence: high
 epistemic-type: observation
-scope: global
+scope: cross-project
 source-agent: test-agent
 source-artifact: test-artifact
 domain:
@@ -73,7 +73,7 @@ updated: 2026-01-01
 status: invalid-value
 confidence: high
 epistemic-type: observation
-scope: global
+scope: cross-project
 source-agent: test-agent
 source-artifact: test-artifact
 domain:
@@ -100,10 +100,10 @@ const missingBodySectionContent = `---
 title: Test Note
 created: 2026-01-01
 updated: 2026-01-01
-status: active
+status: verified
 confidence: high
 epistemic-type: observation
-scope: global
+scope: cross-project
 source-agent: test-agent
 source-artifact: test-artifact
 domain:
@@ -120,10 +120,10 @@ const placeholderContent = `---
 title: <title>
 created: 2026-01-01
 updated: 2026-01-01
-status: active
+status: verified
 confidence: high
 epistemic-type: observation
-scope: global
+scope: cross-project
 source-agent: test-agent
 source-artifact: test-artifact
 domain:

@@ -125,4 +125,37 @@ This is the body of the note.
 			Expect(n.Frontmatter.Title).To(Equal("Known"))
 		})
 	})
+
+	Context("CRLF line endings", func() {
+		It("parses correctly — same result as LF", func() {
+			lf := []byte("---\ntitle: CRLF Test\n---\nBody text.\n")
+			crlf := []byte("---\r\ntitle: CRLF Test\r\n---\r\nBody text.\r\n")
+
+			nLF, err := Parse(lf)
+			Expect(err).NotTo(HaveOccurred())
+
+			nCRLF, err := Parse(crlf)
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(nCRLF.Frontmatter.Title).To(Equal(nLF.Frontmatter.Title))
+			Expect(nCRLF.Body).To(Equal(nLF.Body))
+		})
+	})
+
+	Context("delimiter with trailing spaces", func() {
+		It("treats '---   ' as a valid delimiter", func() {
+			content := []byte("---   \ntitle: Trailing Spaces\n---   \nBody.\n")
+			n, err := Parse(content)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(n.Frontmatter.Title).To(Equal("Trailing Spaces"))
+		})
+	})
+
+	Context("first line is '---notyaml'", func() {
+		It("returns ErrNoFrontmatter", func() {
+			content := []byte("---notyaml\ntitle: Test\n---\nbody\n")
+			_, err := Parse(content)
+			Expect(errors.Is(err, ErrNoFrontmatter)).To(BeTrue())
+		})
+	})
 })

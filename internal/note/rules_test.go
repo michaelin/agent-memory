@@ -17,7 +17,6 @@ var _ = Describe("Helpers", func() {
 			func(v string) { Expect(IsPlaceholder(v)).To(BeTrue()) },
 			Entry("empty string", ""),
 			Entry("angle bracket pattern", "<your-title-here>"),
-			Entry("bare angle brackets", "<>"),
 			Entry("TODO uppercase", "TODO"),
 			Entry("todo lowercase", "todo"),
 			Entry("TBD", "TBD"),
@@ -34,8 +33,9 @@ var _ = Describe("Helpers", func() {
 			func(v string) { Expect(IsPlaceholder(v)).To(BeFalse()) },
 			Entry("normal title", "My Note Title"),
 			Entry("date", "2026-01-01"),
-			Entry("status", "active"),
+			Entry("status", "verified"),
 			Entry("agent name", "claude-3-5-sonnet"),
+			Entry("bare angle brackets", "<>"),
 		)
 	})
 
@@ -136,7 +136,7 @@ var _ = Describe("Lint / NF003", func() {
 			result := Lint(n)
 			Expect(result.Errors).To(ContainElement(LintError{
 				Rule:    "NF003",
-				Message: "field status has invalid value 'unknown': must be one of [draft, active, archived, deprecated]",
+				Message: "field status has invalid value 'unknown': must be one of [inbox, verified, deprecated, contested, superseded]",
 			}))
 		})
 	})
@@ -148,7 +148,7 @@ var _ = Describe("Lint / NF003", func() {
 			result := Lint(n)
 			Expect(result.Errors).To(ContainElement(LintError{
 				Rule:    "NF003",
-				Message: "field epistemic-type has invalid value 'opinion': must be one of [observation, inference, synthesis, hypothesis, procedure]",
+				Message: "field epistemic-type has invalid value 'opinion': must be one of [observation, pattern, constraint, decision, assumption, synthesis]",
 			}))
 		})
 	})
@@ -172,7 +172,7 @@ var _ = Describe("Lint / NF003", func() {
 			result := Lint(n)
 			Expect(result.Errors).To(ContainElement(LintError{
 				Rule:    "NF003",
-				Message: "field scope has invalid value 'team': must be one of [project, global]",
+				Message: "field scope has invalid value 'team': must be one of [project, cross-project]",
 			}))
 		})
 	})
@@ -217,10 +217,10 @@ var _ = Describe("Lint / NF004", func() {
 		})
 	})
 
-	Context("scope=global with empty project", func() {
+	Context("scope=cross-project with empty project", func() {
 		It("returns no NF004 error", func() {
 			n := validNote()
-			n.Frontmatter.Scope = "global"
+			n.Frontmatter.Scope = "cross-project"
 			n.Frontmatter.Project = ""
 			result := Lint(n)
 			for _, e := range result.Errors {
