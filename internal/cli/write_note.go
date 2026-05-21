@@ -74,7 +74,7 @@ Required flags: --type, --title, --domain, --scope, --source-artifact, --confide
 			opts := note.WriteOptions{
 				VaultPath:      vaultPath,
 				Body:           string(bodyBytes),
-				Type:           typeFlag,
+				EpistemicType:  typeFlag,
 				Title:          titleFlag,
 				Project:        projectFlag,
 				Domain:         domainFlag,
@@ -105,16 +105,16 @@ Required flags: --type, --title, --domain, --scope, --source-artifact, --confide
 					return fmt.Errorf("marshal JSON: %w", merr)
 				}
 				fmt.Println(string(out))
-				if result.Status == note.WriteStatusRefused {
-					cmd.SilenceUsage = true
-					cmd.SilenceErrors = true
-					return fmt.Errorf("note refused: %s", result.Reason)
-				}
-				return nil
+			if result.Status == "refused" {
+				cmd.SilenceUsage = true
+				cmd.SilenceErrors = true
+				return fmt.Errorf("note refused: %s", result.Reason)
 			}
+			return nil
+		}
 
-			// Human-readable output.
-			if result.Status == note.WriteStatusWritten {
+		// Human-readable output.
+		if result.Status == "written" {
 				fmt.Printf("✓ Written: %s\n", result.Path)
 				return nil
 			}
@@ -122,7 +122,7 @@ Required flags: --type, --title, --domain, --scope, --source-artifact, --confide
 			// Refused.
 			fmt.Printf("✗ Refused: %s\n", result.Reason)
 			for _, c := range result.Candidates {
-				fmt.Printf("  similar: %s (score %.2f)\n", c.Path, c.Score)
+				fmt.Printf("  similar: %s (score %.2f)\n", c.Path, c.Similarity)
 			}
 			cmd.SilenceUsage = true
 			return fmt.Errorf("note refused: %s", result.Reason)

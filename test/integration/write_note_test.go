@@ -65,9 +65,12 @@ var _ = Describe("write-note", func() {
 			stdout, _, exitCode := testutil.RunBinary(binPath, writeNoteArgs(vaultPath, bodyFile)...)
 			Expect(exitCode).To(Equal(0))
 			Expect(stdout).To(ContainSubstring("✓ Written:"))
-			Expect(stdout).To(ContainSubstring("notes/test-note.md"))
+			Expect(stdout).To(ContainSubstring("_inbox/"))
 
-			Expect(filepath.Join(vaultPath, "notes", "test-note.md")).To(BeAnExistingFile())
+			// File should exist somewhere under _inbox/
+			matches, err := filepath.Glob(filepath.Join(vaultPath, "_inbox", "*test-note.md"))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(matches).NotTo(BeEmpty())
 		})
 	})
 
@@ -80,7 +83,7 @@ var _ = Describe("write-note", func() {
 			var result map[string]interface{}
 			Expect(json.Unmarshal([]byte(stdout), &result)).To(Succeed())
 			Expect(result["status"]).To(Equal("written"))
-			Expect(result["path"]).To(ContainSubstring("notes/"))
+			Expect(result["path"]).To(ContainSubstring("_inbox/"))
 		})
 	})
 
@@ -100,7 +103,9 @@ var _ = Describe("write-note", func() {
 			stdout, _, exitCode := testutil.RunBinaryWithStdin(binPath, noteBody, args...)
 			Expect(exitCode).To(Equal(0))
 			Expect(stdout).To(ContainSubstring("✓ Written:"))
-			Expect(filepath.Join(vaultPath, "notes", "stdin-note.md")).To(BeAnExistingFile())
+			matches, err := filepath.Glob(filepath.Join(vaultPath, "_inbox", "*stdin-note.md"))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(matches).NotTo(BeEmpty())
 		})
 	})
 
