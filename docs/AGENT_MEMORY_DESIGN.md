@@ -413,7 +413,7 @@ table of contents first; you only open a chapter when you need it.
 ```markdown
 ---
 title: "Index: Golang domain"
-epistemic-type: index
+type: index
 domain: [golang]
 status: verified
 maintained-by: librarian
@@ -464,7 +464,7 @@ middle path.
 
 **The concept:**
 - **Phase 1 — Discovery:** grep frontmatter fields (title, tags, domain,
-  epistemic-type) across `notes/`. Returns titles and frontmatter only —
+  type) across `notes/`. Returns titles and frontmatter only —
   never body content. Cheap; proportional to vault size. Always filters to
   `status: verified`.
 - **Phase 2 — Selective read:** the agent reasons about Phase 1 results and
@@ -566,7 +566,7 @@ The agent's per-session token budget is reserved for the work only an LLM
 can do:
 
 - Composing the claim itself (the body text).
-- Picking the `epistemic-type` when ambiguous.
+- Picking the `type` when ambiguous.
 - Assessing evidence quality and confidence.
 - Deciding whether two notes are *semantically* the same claim when titles
   differ.
@@ -703,7 +703,7 @@ updated: 2026-04-24
 review-by: 2026-07-24          # TTL by epistemic type (see §5.6); blank for synthesis
 status: inbox                  # inbox | verified | deprecated | contested | superseded
 confidence: medium             # low | medium | high
-epistemic-type: observation    # observation | pattern | constraint | decision | assumption | synthesis
+type: observation              # observation | pattern | constraint | decision | assumption | synthesis
 scope: project                 # project | cross-project
 project: project-slug          # source project; cross-project notes leave this blank
 domain: [golang, auth]         # technology domains this note applies to
@@ -712,8 +712,7 @@ source-artifact: "<repo-relative path or URL of the artifact this claim came fro
 verified-by: ""                # agent or human who promoted to verified
 verified-date: ""
 requires-human-review: false   # set true by memory-write for constraint/decision; gates memory-promote
-update-type: ""                # only set by memory-write on staged correction notes: supersedes
-targets: []                    # only set on correction notes: [[note-slug]] being amended
+superseded-by: ""              # set by deprecate: wikilink to replacement note
 tags: []                       # Librarian-assigned on maintenance pass; agents leave blank
 ---
 
@@ -733,13 +732,9 @@ One short paragraph. One claim, one pattern, or one decision. No padding.
 - [[note-slug]] — short description of relationship
 ```
 
-**On `update-type` and `targets`:** these fields are blank on new
-knowledge notes. They are populated automatically by `agent-memory write-note` only
-when `--update=<slug>` targets a high-stakes note (`constraint`,
-`decision`, `assumption`) and supersession staging is required. In-place
-edits to `observation`/`pattern`/`synthesis` targets do not produce a
-correction note at all — the tool edits the target directly and writes a
-`## Change log` line. See §5.5.
+**On `superseded-by`:** this field is blank on new notes. It is set
+automatically by `agent-memory deprecate` when a note is replaced by a
+newer version. The value is a wikilink to the replacement note. See §5.6.
 
 **On `requires-human-review`:** set to `true` by `agent-memory write-note` for
 `constraint` and `decision` writes. `agent-memory promote` will not promote
@@ -794,7 +789,7 @@ inbox placement, log writing, lint gating — happens inside the tool.
 
 **What the agent does**
 
-1. Decide the `epistemic-type`. If unsure, default to `observation`.
+1. Decide the `type`. If unsure, default to `observation`.
 2. Write the claim body and the `## Evidence` section.
 3. Declare `--source-artifact=<stable path or URL>`.
 4. Choose one of:
@@ -820,7 +815,7 @@ inbox placement, log writing, lint gating — happens inside the tool.
    the Librarian assigns tags on its maintenance pass), and `review-by`
    from the per-type TTL table (§5.6).
 3. **Lint.** Invoke `agent-memory lint-note` against the assembled note. Refuse on failure.
-4. **Constraint and decision gating.** For `epistemic-type: constraint` or
+4. **Constraint and decision gating.** For `type: constraint` or
    `decision`, mark the note `requires-human-review: true` in frontmatter so
    `agent-memory promote` will not auto-promote it.
 5. **Inbox write.** Write `_inbox/{YYYY-MM-DD}-{slug}.md`.
@@ -838,7 +833,7 @@ uniqueness, and lint validity before promoting.
 |---|---|
 | `observation` | Librarian checks completeness, uniqueness, lint. Moves to `notes/`, `status: verified`. |
 | `pattern` | Librarian checks completeness, uniqueness, lint. Promotes only if the note references 2+ corroborating notes. Moves to `notes/`, `status: verified`. |
-| `assumption` | Librarian checks completeness, uniqueness, lint. Moves to `notes/`, `status: verified`. Stays as `epistemic-type: assumption` — it is not reclassified. User agents can later write an observation or other note that verifies or disproves the assumption; the Librarian removes outdated assumptions. |
+| `assumption` | Librarian checks completeness, uniqueness, lint. Moves to `notes/`, `status: verified`. Stays as `type: assumption` — it is not reclassified. User agents can later write an observation or other note that verifies or disproves the assumption; the Librarian removes outdated assumptions. |
 | `constraint` | Librarian checks completeness, uniqueness, lint. Requires human confirmation (via agent tool call based on human response). Moves to `notes/`, `status: verified` only after confirmation. |
 | `decision` | Same as constraint: Librarian checks, human confirms via agent tool call. |
 | `synthesis` | Created by the Librarian (proactively during maintenance, or on agent request). Auto-promoted on creation. |
@@ -903,7 +898,7 @@ archive mechanism may be introduced in a future increment.
 ### 5.6 Staleness prevention
 
 Every note has a `review-by` date assigned automatically by `agent-memory write-note`
-based on `epistemic-type`. This date is a **staleness indicator only** — it
+based on `type`. This date is a **staleness indicator only** — it
 signals when a note should be re-verified, not when it gets promoted.
 Promotion is handled by the Librarian (§5.5), not by TTL expiry.
 
@@ -1027,14 +1022,14 @@ bounded prose drafting or a single recommendation to the human. A second
 Librarian instance adds latency without changing the outcome. Upstream
 quorum (where used) has already established the underlying claim.
 
-**Placement:** The Librarian is implemented as a Claude Code skill that user
-agents invoke as the last step of their workflow. This is the primary interface:
-skill invocation, not a standalone agent. There is no standalone agent definition
-file and no team manifest entry for the Librarian (see §10: "No standalone agent
-or team manifest"). If a backing agent definition file is introduced in a future
-increment (e.g., to support non-skill invocation paths in other frameworks), this
-section will be updated to name it explicitly. For now, the skill definition is
-the sole artifact.
+**Placement:** The Librarian runs as a **subagent** — a dedicated agent
+instance invoked by the user agent at the end of its workflow. Running as a
+subagent (rather than inline skill instructions) isolates memory-handling
+context from the user agent's context window, preventing context poisoning.
+The vault carries deployment templates at `_meta/templates/librarian-agent.md`
+and `_meta/templates/librarian-skill.md` that are seeded by `agent-memory init`.
+These templates target OpenCode as the primary harness; the architecture
+supports future expansion to other agent frameworks.
 
 **Permissions:**
 - `read`: allow (vault path)
@@ -1074,7 +1069,7 @@ side-effects, not Librarian work.
 | Threat | Control |
 |---|---|
 | Stale facts | TTL (`review-by`) + staleness scan at session start |
-| Assumption treated as fact | Mandatory `epistemic-type: assumption` + 30-day TTL + agents forbidden from acting on assumptions without re-verifying |
+| Assumption treated as fact | Mandatory `type: assumption` + 30-day TTL + agents forbidden from acting on assumptions without re-verifying |
 | Conflicting writes | Search-before-write + `_contested/` staging for contradictions |
 | Hallucination laundering | `_inbox/` visibility buffer + epistemic typing; `constraint`/`decision` types require Librarian review and human confirmation |
 | Citation collapse | Mandatory `source-agent`, `source-artifact` fields |
@@ -1359,7 +1354,7 @@ service, but the `promote` subcommand interface remains the same.
 Deterministically regenerates `_index-{project}.md` and
 `_index-{domain}.md` files from a full frontmatter scan, plus regenerates
 `_meta/constraints-summary.md` from all `status: verified`
-`epistemic-type: constraint` notes. Idempotent. Replaces the entire
+`type: constraint` notes. Idempotent. Replaces the entire
 "Librarian maintains the indices" loop with a binary that runs in milliseconds.
 
 #### `agent-memory tag` *(Librarian-only)*
@@ -1427,7 +1422,7 @@ and `promote`.
 
 **Checks performed:**
 - All required frontmatter fields present and non-empty
-- `epistemic-type` is one of the allowed values (incl. `synthesis`)
+- `type` is one of the allowed values (incl. `synthesis`)
 - `status` is one of the allowed values
 - `confidence` is one of the allowed values
 - `created` and `updated` are valid ISO dates
@@ -1501,7 +1496,7 @@ path serves as the catch-all for invocations outside any project.
 |---|---|---|
 | Session start | `agent-memory context` | Agent (one tool call) |
 | During work | `agent-memory search`, `agent-memory write-note` | Agent, on demand |
-| Session end (current model) | Librarian skill invocation: validate, promote, deduplicate inbox notes | User agent (last step of workflow) |
+| Session end (current model) | Librarian subagent invocation: validate, promote, deduplicate inbox notes | User agent (last step of workflow) |
 | Session end (future: decoupled model) | `agent-memory promote`, `agent-memory reindex` | Host hook / cron / human — **no agent involvement** |
 | Log threshold crossed | Librarian maintenance pass: tag untagged notes, detect patterns, review synthesis gaps | Host/cron (log line-count check) |
 | Daily / weekly | `agent-memory lint-vault` | Cron or human |
@@ -1528,11 +1523,11 @@ All questions from the initial design phase are closed.
 | Index maintenance | `agent-memory reindex` regenerates from frontmatter scan; not Librarian work |
 | Promotion | Librarian-driven. User agent invokes Librarian skill after writing notes. Librarian checks completeness, uniqueness, lint, then promotes. No TTL-based auto-promote; `review-by` is a staleness indicator only. |
 | Librarian role | Validation, classification, promotion (all types), deduplication, assumption outdating, human confirmation for constraints/decisions, tagging, pattern detection, synthesis, optional maintenance. |
-| Librarian triggers | User agent invokes Librarian skill as last step of workflow. Future: decoupled background service (filesystem watch, session-end hook, cron). |
+| Librarian triggers | User agent invokes Librarian subagent as last step of workflow. Future: decoupled background service (filesystem watch, session-end hook, cron). |
 | Correction/amendment | Replacement only — no in-place edits. New note replaces old; Librarian deprecates old note with forward link. Full audit trail preserved. |
 | Pattern detection | Librarian task using LLM judgment on its maintenance pass; no deterministic binary |
 | Synthesis triggers | Librarian creates proactively during maintenance or on agent request; `lint-vault --dense` surfaces areas needing synthesis |
-| Librarian placement | Skill invoked by user agents; defined as a Claude Code skill. No standalone agent or team manifest. |
+| Librarian placement | Subagent invoked by user agents; isolates memory-handling from user context. Vault carries deployment templates at `_meta/templates/`. Targets OpenCode first; architecture supports future expansion. |
 | Agent-framework coupling | Design is framework-agnostic; only the Librarian role is defined here |
 | Harness hooks | Agent-instruction baseline only; hooks documented as optional enhancements |
 | Tooling | Go module `github.com/michaelin/agent-memory`; single binary with subcommands ([ADR-0001](adr/adr-0001-single-binary-with-subcommands.md)); agent-facing subcommands (`context`, `write-note`, `search`) + maintenance (`promote`, `reindex`, `tag`, `synthesize`, `curate`) + lint subcommands |

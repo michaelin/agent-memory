@@ -19,13 +19,13 @@ stating no notes were pending and exit.
 For each file, run:
 
 ```
-agent-memory lint-note <path>
+agent-memory lint-note --json <path>
 ```
 
 If lint fails, add the file to the **skipped** list with the lint errors and
 continue to the next file.
 
-## Step 3 — Check epistemic type
+## Step 3 — Check note type
 
 Parse the `type` field from the note's frontmatter:
 
@@ -35,14 +35,17 @@ Parse the `type` field from the note's frontmatter:
 
 ## Step 4 — Promote automatically
 
+Extract the slug from the filename. Inbox filenames follow the pattern
+`{date}-{slug}.md` — the slug is everything after the first hyphen-separated
+date prefix.
+
 Run:
 
 ```
-agent-memory promote <path>
+agent-memory promote --slug=<slug> --json
 ```
 
-Add the note to the **promoted** list. Then check whether the note's
-`superseded-by` field is set; if so, proceed to Step 6.
+Add the note to the **promoted** list. Then proceed to Step 6.
 
 ## Step 5 — Request human confirmation
 
@@ -50,26 +53,32 @@ Present the note title, type, and body summary to the human. Ask:
 
 > "This note is a `<type>`. Do you approve promoting it to `notes/`?"
 
-- If approved → run `agent-memory promote <path>`, add to **promoted** list,
-  then check `superseded-by` (Step 6).
+- If approved → run:
+  ```
+  agent-memory promote --slug=<slug> --confirmed --json
+  ```
+  Add to **promoted** list, then proceed to Step 6.
 - If rejected → add to **skipped** list with reason "human declined".
 
-## Step 6 — Deprecate superseded notes
+## Step 6 — Check for superseded notes
 
-If the promoted note's `superseded-by` field names a slug, run:
+After promoting a note, check whether it replaces an existing note in `notes/`.
+Look for wikilinks in the note body that reference notes in `notes/` — if the
+note body explicitly states it replaces or supersedes another note, deprecate
+the old one:
 
 ```
-agent-memory deprecate <slug>
+agent-memory deprecate --slug=<old-slug> --superseded-by=<new-slug> --json
 ```
 
-Record the deprecation in the summary.
+If no supersession is indicated, skip this step.
 
 ## Step 7 — Return summary
 
 Report:
 
 - **Promoted**: count and list of promoted note titles.
-- **Deprecated**: count and list of deprecated note slugs.
-- **Skipped**: count and list of skipped files with reasons.
+- **Deprecated**: count and list of deprecated note slugs with their replacements.
+- **Skipped**: count and list of skipped files with reasons (lint errors, human declined).
 - **Escalated**: count and list of notes awaiting human confirmation (if any
   were deferred rather than answered inline).

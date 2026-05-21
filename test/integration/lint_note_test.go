@@ -17,7 +17,7 @@ created: 2026-01-01
 updated: 2026-01-01
 status: verified
 confidence: high
-epistemic-type: observation
+type: observation
 scope: cross-project
 source-agent: test-agent
 source-artifact: test-artifact
@@ -44,7 +44,7 @@ created: 2026-01-01
 updated: 2026-01-01
 status: verified
 confidence: high
-epistemic-type: observation
+type: observation
 scope: cross-project
 source-agent: test-agent
 source-artifact: test-artifact
@@ -72,7 +72,7 @@ created: 2026-01-01
 updated: 2026-01-01
 status: invalid-value
 confidence: high
-epistemic-type: observation
+type: observation
 scope: cross-project
 source-agent: test-agent
 source-artifact: test-artifact
@@ -102,7 +102,7 @@ created: 2026-01-01
 updated: 2026-01-01
 status: verified
 confidence: high
-epistemic-type: observation
+type: observation
 scope: cross-project
 source-agent: test-agent
 source-artifact: test-artifact
@@ -122,7 +122,7 @@ created: 2026-01-01
 updated: 2026-01-01
 status: verified
 confidence: high
-epistemic-type: observation
+type: observation
 scope: cross-project
 source-agent: test-agent
 source-artifact: test-artifact

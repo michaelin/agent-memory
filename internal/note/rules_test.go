@@ -141,14 +141,14 @@ var _ = Describe("Lint / NF003", func() {
 		})
 	})
 
-	Context("invalid epistemic-type", func() {
+	Context("invalid type", func() {
 		It("returns an NF003 error", func() {
 			n := validNote()
 			n.Frontmatter.EpistemicType = "opinion"
 			result := Lint(n)
 			Expect(result.Errors).To(ContainElement(LintError{
 				Rule:    "NF003",
-				Message: "field epistemic-type has invalid value 'opinion': must be one of [observation, pattern, constraint, decision, assumption, synthesis]",
+				Message: "field type has invalid value 'opinion': must be one of [observation, pattern, constraint, decision, assumption, synthesis]",
 			}))
 		})
 	})

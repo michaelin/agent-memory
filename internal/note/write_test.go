@@ -279,7 +279,7 @@ var _ = Describe("Write", func() {
 				}
 				result, err := Write(opts)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(result.Status).To(Equal("written"), "epistemic-type=%s result=%+v", epistemicType, result)
+				Expect(result.Status).To(Equal("written"), "type=%s result=%+v", epistemicType, result)
 
 				data, _ := os.ReadFile(result.Path)
 				parsed, _ := Parse(data)

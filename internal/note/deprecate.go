@@ -27,6 +27,10 @@ type DeprecateResult struct {
 // Returns DeprecateResult{Status:"error"} together with the error on any
 // failure.
 func Deprecate(vaultPath, slug, supersededBy string) (DeprecateResult, error) {
+	if err := ValidateSlug(slug); err != nil {
+		return DeprecateResult{Status: "error", Slug: slug, Error: err.Error()}, err
+	}
+
 	notePath := filepath.Join(vaultPath, "notes", slug+".md")
 
 	// Step 1: Verify the source note exists.

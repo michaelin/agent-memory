@@ -76,7 +76,7 @@ var ruleNF001 = Rule{
 			{"updated", n.Frontmatter.Updated},
 			{"status", n.Frontmatter.Status},
 			{"confidence", n.Frontmatter.Confidence},
-			{"epistemic-type", n.Frontmatter.EpistemicType},
+			{"type", n.Frontmatter.EpistemicType},
 			{"scope", n.Frontmatter.Scope},
 			{"source-artifact", n.Frontmatter.SourceArtifact},
 		}
@@ -134,7 +134,7 @@ var ruleNF003 = Rule{
 		}
 		fields := []enumField{
 			{"status", n.Frontmatter.Status, []string{"inbox", "verified", "deprecated", "contested", "superseded"}},
-			{"epistemic-type", n.Frontmatter.EpistemicType, []string{"observation", "pattern", "constraint", "decision", "assumption", "synthesis"}},
+			{"type", n.Frontmatter.EpistemicType, []string{"observation", "pattern", "constraint", "decision", "assumption", "synthesis"}},
 			{"confidence", n.Frontmatter.Confidence, []string{"low", "medium", "high"}},
 			{"scope", n.Frontmatter.Scope, []string{"project", "cross-project"}},
 		}
@@ -205,7 +205,7 @@ var ruleNF006 = Rule{
 			{"updated", n.Frontmatter.Updated},
 			{"status", n.Frontmatter.Status},
 			{"confidence", n.Frontmatter.Confidence},
-			{"epistemic-type", n.Frontmatter.EpistemicType},
+			{"type", n.Frontmatter.EpistemicType},
 			{"scope", n.Frontmatter.Scope},
 			{"source-agent", n.Frontmatter.SourceAgent},
 			{"source-artifact", n.Frontmatter.SourceArtifact},

@@ -57,7 +57,7 @@ Use this skill to write a note to the agent memory vault.
 3. **Invoke the skill:** Call `write-memory` with:
    - `claim`: Your factual claim (one sentence)
    - `evidence`: Where you observed this
-   - `epistemic-type`: One of: observation, pattern, constraint, decision, assumption
+   - `type`: One of: observation, pattern, constraint, decision, assumption, synthesis
    - `confidence`: One of: low, medium, high
    - `scope`: One of: project, cross-project
    - `project`: Project slug (if scope is project)
@@ -79,7 +79,7 @@ You've discovered that "Go error handling must wrap errors with context at domai
 Call write-memory with:
 - claim: "Go error handling must wrap errors with context at domain boundaries"
 - evidence: "Observed in pkg/errors/wrap.go lines 10-25"
-- epistemic-type: "observation"
+- type: "observation"
 - confidence: "high"
 - scope: "project"
 - project: "myproject"

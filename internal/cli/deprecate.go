@@ -24,7 +24,7 @@ func newDeprecateCmd() *cobra.Command {
 recording the superseding note slug in its frontmatter.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := validateSlug(slugFlag); err != nil {
+			if err := note.ValidateSlug(slugFlag); err != nil {
 				cmd.SilenceUsage = true
 				return err
 			}

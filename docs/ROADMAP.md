@@ -104,7 +104,7 @@ Each increment is a complete vertical slice: design → research → structure �
   created: 2026-04-24
   updated: 2026-04-24
   status: inbox
-  epistemic-type: observation
+  type: observation
   confidence: medium
   scope: project
   project: project-slug
@@ -118,8 +118,7 @@ Each increment is a complete vertical slice: design → research → structure �
   verified-by: ""
   verified-date: ""
   requires-human-review: false
-  update-type: ""
-  targets: []
+  superseded-by: ""
   tags: []
   ```
 - Body sections (required):
@@ -134,7 +133,7 @@ Each increment is a complete vertical slice: design → research → structure �
   - `title`: non-empty string
   - `created`, `updated`: ISO date format (YYYY-MM-DD)
   - `status`: one of `inbox`, `verified`, `deprecated`, `contested`, `superseded`
-  - `epistemic-type`: one of `observation`, `pattern`, `constraint`, `decision`, `assumption`, `synthesis`
+  - `type`: one of `observation`, `pattern`, `constraint`, `decision`, `assumption`, `synthesis`
   - `confidence`: one of `low`, `medium`, `high`
   - `scope`: one of `project`, `cross-project`
   - `project`: non-empty string (required if `scope: project`)
@@ -164,7 +163,7 @@ Each increment is a complete vertical slice: design → research → structure �
      - `title`: Concise factual claim (one sentence)
      - `created`, `updated`: ISO dates (YYYY-MM-DD)
      - `status`: Always `inbox` for new notes
-     - `epistemic-type`: One of: observation, pattern, constraint, decision, assumption
+     - `type`: One of: observation, pattern, constraint, decision, assumption, synthesis
      - `confidence`: One of: low, medium, high
      - `scope`: One of: project, cross-project
      - `project`: Project slug (required if scope is project)
@@ -188,7 +187,7 @@ Each increment is a complete vertical slice: design → research → structure �
 ### Verification (Integration Tests)
 - **Valid note:** Create a note with all required fields, run `lint-note`, verify pass
 - **Missing field:** Create a note missing a required field, run `lint-note`, verify fail with specific error
-- **Invalid value:** Create a note with invalid `epistemic-type`, run `lint-note`, verify fail
+- **Invalid value:** Create a note with invalid `type`, run `lint-note`, verify fail
 - **Malformed YAML:** Create a note with broken YAML, run `lint-note`, verify fail
 - **Body sections:** Create a note missing `## Evidence`, run `lint-note`, verify fail
 - **Placeholder values:** Create a note with placeholder text, run `lint-note`, verify fail
@@ -267,7 +266,7 @@ Each increment is a complete vertical slice: design → research → structure �
 - Phase 1: Frontmatter discovery (grep + YAML parsing)
   - Returns titles, frontmatter, and metadata only (no body content)
   - Filters to `status: verified` only
-  - Supports filtering by project, domain, epistemic-type
+  - Supports filtering by project, domain, type
   - Tag alias expansion (read from `_meta/tag-taxonomy.md`)
 - Phase 2: Selective body read
   - Takes a list of slugs

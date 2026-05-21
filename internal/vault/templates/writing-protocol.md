@@ -7,6 +7,7 @@ This vault stores persistent knowledge for AI agents working in this project.
 - `_meta/` — vault metadata, rules, and configuration
 - `_inbox/` — unprocessed notes awaiting review
 - `_contested/` — notes with conflicting or uncertain information
+- `_deprecated/` — superseded notes with forward links to replacements
 - `notes/` — processed, reliable knowledge
 
 ## Note Format
@@ -23,7 +24,7 @@ followed by a plain-text Markdown body.
 | `updated` | Date the note was last updated | YYYY-MM-DD |
 | `status` | Lifecycle status of the note | `inbox`, `verified`, `deprecated`, `contested`, `superseded` |
 | `confidence` | Confidence level in the note's content | `low`, `medium`, `high` |
-| `epistemic-type` | How the knowledge was derived | `observation`, `pattern`, `constraint`, `decision`, `assumption`, `synthesis` |
+| `type` | How the knowledge was derived | `observation`, `pattern`, `constraint`, `decision`, `assumption`, `synthesis` |
 | `scope` | Whether the note applies to this project or globally | `project`, `cross-project` |
 | `source-agent` | Identifier of the agent that created the note | Any non-empty string |
 | `source-artifact` | The artifact or context that produced this note | Any non-empty string |
@@ -38,8 +39,7 @@ followed by a plain-text Markdown body.
 | `verified-by` | Agent that verified the note's content |
 | `verified-date` | Date the note was verified (YYYY-MM-DD) |
 | `requires-human-review` | Boolean flag for notes needing human review |
-| `update-type` | Type of update (`append`, `replace`, `retract`) |
-| `targets` | List of note IDs this note targets |
+| `superseded-by` | Wikilink to the note that replaces this one |
 | `tags` | Free-form tags for additional categorisation |
 
 ## Body Section Requirements
@@ -49,7 +49,7 @@ The note body must contain the following sections as Markdown headings:
 - `# <Title>` — an H1 heading matching the note title
 - `## Related` — links to related notes
 
-For all epistemic types **except** `synthesis`:
+For all note types **except** `synthesis`:
 - `## Evidence` — supporting evidence
 - `## Implications` — what this means for the project
 
@@ -85,7 +85,7 @@ Use the `agent-memory write-note` command to write a new note to the vault.
 ### CLI Syntax
 
 ```
-agent-memory write-note [--vault <path>] --type <epistemic-type> --title <title> [--project <name>] [--domain <domain>...] [--scope <scope>] [--source-artifact <artifact>] [--source-agent <agent>] [--confidence <level>] [--tags <tag>...] [--force] <body-file>
+agent-memory write-note [--vault <path>] --type <type> --title <title> [--project <name>] [--domain <domain>...] [--scope <scope>] [--source-artifact <artifact>] [--source-agent <agent>] [--confidence <level>] [--tags <tag>...] [--force] <body-file>
 ```
 
 `<body-file>` is a path to a Markdown file containing the note body, or `-` to read from stdin.

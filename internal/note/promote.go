@@ -73,6 +73,10 @@ func Promote(vaultPath, slug string, confirmed bool) (PromoteResult, error) {
 		return PromoteResult{Status: "error", Slug: slug, Error: err.Error()}, err
 	}
 
+	if err := ValidateSlug(slug); err != nil {
+		return errResult(err)
+	}
+
 	// Step 1: locate the inbox file.
 	inboxDir := filepath.Join(vaultPath, "_inbox")
 	inboxPath, err := FindBySlug(inboxDir, slug)
