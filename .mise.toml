@@ -2,8 +2,21 @@
 go = "latest"
 golangci-lint = "latest"
 
+[env]
+_.path = ["{{env.GOPATH | default(value=\"~/go\")}}/bin"]
+
 [tasks.build]
+description = "Build the agent-memory binary"
 run = "go build -o bin/agent-memory ./cmd/agent-memory"
+
+[tasks.install]
+description = "Build and install agent-memory to GOPATH/bin and local bin/"
+run = """
+go build -o bin/agent-memory ./cmd/agent-memory
+go install ./cmd/agent-memory
+echo "Installed to $(go env GOPATH)/bin/agent-memory"
+echo "Local binary at bin/agent-memory"
+"""
 
 [tasks.test]
 run = "go test -v ./... -args --ginkgo.succinct"
@@ -13,3 +26,106 @@ run = "golangci-lint run"
 
 [tasks.test-integration]
 run = "go test -v -tags=integration ./test/integration/... -args --ginkgo.succinct"
+
+[tasks."deploy:instructions"]
+description = "Inject agent-memory instructions into the OpenCode global AGENTS.md"
+depends = ["install"]
+run = """
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Find the binary: local build, GOPATH, or PATH
+AM="${PWD}/bin/agent-memory"
+if [ ! -x "$AM" ]; then AM="$(go env GOPATH)/bin/agent-memory"; fi
+if [ ! -x "$AM" ]; then AM="$(command -v agent-memory 2>/dev/null || true)"; fi
+if [ -z "$AM" ] || [ ! -x "$AM" ]; then
+  echo "Error: agent-memory binary not found. Run 'mise run install' first." >&2
+  exit 1
+fi
+
+AGENTS_FILE="${OPENCODE_AGENTS_FILE:-$HOME/.config/opencode/AGENTS.md}"
+BEGIN_MARKER="<!-- BEGIN agent-memory -->"
+END_MARKER="<!-- END agent-memory -->"
+
+# Ensure parent directory exists
+mkdir -p "$(dirname "$AGENTS_FILE")"
+
+# Generate fresh instructions
+INSTRUCTIONS="$BEGIN_MARKER
+$("$AM" instructions)
+$END_MARKER"
+
+if [ ! -f "$AGENTS_FILE" ]; then
+  echo "$INSTRUCTIONS" > "$AGENTS_FILE"
+  echo "Created $AGENTS_FILE with agent-memory instructions"
+  exit 0
+fi
+
+if grep -qF "$BEGIN_MARKER" "$AGENTS_FILE"; then
+  # Replace existing section: write content before marker, new content, content after end marker
+  python3 -c "
+import sys
+content = open(sys.argv[1]).read()
+begin, end = sys.argv[2], sys.argv[3]
+repl = sys.argv[4]
+bi = content.find(begin)
+ei = content.find(end)
+if bi >= 0 and ei >= 0:
+    before = content[:bi]
+    after = content[ei+len(end)+1:]  # +1 for newline
+    print(before + repl + after, end='')
+" "$AGENTS_FILE" "$BEGIN_MARKER" "$END_MARKER" "$INSTRUCTIONS" > "${AGENTS_FILE}.tmp"
+  mv "${AGENTS_FILE}.tmp" "$AGENTS_FILE"
+  echo "Updated agent-memory section in $AGENTS_FILE"
+else
+  # Append to existing file
+  printf '\n%s\n' "$INSTRUCTIONS" >> "$AGENTS_FILE"
+  echo "Appended agent-memory instructions to $AGENTS_FILE"
+fi
+"""
+
+[tasks."deploy:librarian"]
+description = "Deploy Librarian agent and skill to OpenCode global skill storage"
+run = """
+#!/usr/bin/env bash
+set -euo pipefail
+
+SKILLS_DIR="${OPENCODE_SKILLS_DIR:-$HOME/.config/opencode/skills}"
+SKILL_NAME="librarian-workflow"
+SKILL_DIR="$SKILLS_DIR/$SKILL_NAME"
+
+# Source templates: check vault first, fall back to repo source
+TEMPLATE_DIR=""
+for candidate in \
+  "${AGENT_MEMORY_VAULT:-}/_meta/templates" \
+  ".agent-memory/_meta/templates" \
+  "internal/vault/templates"; do
+  if [ -n "$candidate" ] && [ -f "$candidate/librarian-skill.md" ]; then
+    TEMPLATE_DIR="$candidate"
+    break
+  fi
+done
+
+if [ -z "$TEMPLATE_DIR" ]; then
+  echo "Error: Librarian templates not found." >&2
+  echo "Run from the agent-memory repo root or a project with a vault." >&2
+  exit 1
+fi
+
+# Deploy skill (create or replace)
+mkdir -p "$SKILL_DIR"
+cp "$TEMPLATE_DIR/librarian-skill.md" "$SKILL_DIR/SKILL.md"
+echo "Deployed skill: $SKILL_DIR/SKILL.md"
+
+# Deploy agent definition alongside the skill for reference
+cp "$TEMPLATE_DIR/librarian-agent.md" "$SKILL_DIR/agent.md"
+echo "Deployed agent ref: $SKILL_DIR/agent.md"
+
+echo ""
+echo "Librarian deployed to $SKILL_DIR/"
+echo "The skill is now available as '$SKILL_NAME' in OpenCode."
+"""
+
+[tasks.deploy]
+description = "Install binary, deploy instructions, and deploy Librarian skill"
+depends = ["install", "deploy:instructions", "deploy:librarian"]
