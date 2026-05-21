@@ -6,9 +6,9 @@ import (
 )
 
 var _ = Describe("VaultStructure", func() {
-	It("returns 9 entries", func() {
+	It("returns 13 entries", func() {
 		entries := VaultStructure()
-		Expect(entries).To(HaveLen(9))
+		Expect(entries).To(HaveLen(13))
 	})
 
 	It("lists directories before files", func() {
@@ -34,5 +34,45 @@ var _ = Describe("VaultStructure", func() {
 			Expect(err).NotTo(HaveOccurred(), "template %s not readable", e.Template)
 			Expect(data).NotTo(BeEmpty(), "template %s is empty", e.Template)
 		}
+	})
+
+	It("includes _deprecated/ directory", func() {
+		paths := make([]string, 0)
+		for _, e := range VaultStructure() {
+			if e.IsDir {
+				paths = append(paths, e.Path)
+			}
+		}
+		Expect(paths).To(ContainElement("_deprecated"))
+	})
+
+	It("includes _meta/templates/ directory", func() {
+		paths := make([]string, 0)
+		for _, e := range VaultStructure() {
+			if e.IsDir {
+				paths = append(paths, e.Path)
+			}
+		}
+		Expect(paths).To(ContainElement("_meta/templates"))
+	})
+
+	It("includes librarian-agent.md template file", func() {
+		paths := make([]string, 0)
+		for _, e := range VaultStructure() {
+			if !e.IsDir {
+				paths = append(paths, e.Path)
+			}
+		}
+		Expect(paths).To(ContainElement("_meta/templates/librarian-agent.md"))
+	})
+
+	It("includes librarian-skill.md template file", func() {
+		paths := make([]string, 0)
+		for _, e := range VaultStructure() {
+			if !e.IsDir {
+				paths = append(paths, e.Path)
+			}
+		}
+		Expect(paths).To(ContainElement("_meta/templates/librarian-skill.md"))
 	})
 })

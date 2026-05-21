@@ -17,7 +17,7 @@ updated: "2026-05-21"
 review-by: "2026-12-31"
 status: verified
 confidence: high
-epistemic-type: observation
+type: observation
 scope: project
 project: agent-memory
 domain:
@@ -28,7 +28,7 @@ source-artifact: test-artifact
 verified-by: human
 verified-date: "2026-05-21"
 requires-human-review: true
-update-type: minor
+superseded-by: some-other-note
 targets:
   - target-a
   - target-b
@@ -58,7 +58,7 @@ This is the body of the note.
 			Expect(fm.VerifiedBy).To(Equal("human"))
 			Expect(fm.VerifiedDate).To(Equal("2026-05-21"))
 			Expect(fm.RequiresHumanReview).To(BeTrue())
-			Expect(fm.UpdateType).To(Equal("minor"))
+			Expect(fm.SupersededBy).To(Equal("some-other-note"))
 			Expect(fm.Targets).To(ConsistOf("target-a", "target-b"))
 			Expect(fm.Tags).To(ConsistOf("tag1", "tag2"))
 		})

@@ -68,6 +68,24 @@ var _ = Describe("Serialize", func() {
 			Expect(parsed.Body).To(BeEmpty())
 		})
 	})
+
+	Context("superseded-by field", func() {
+		It("includes superseded-by in serialized output when set", func() {
+			fm := validFrontmatter()
+			fm.SupersededBy = "some-other-note"
+			n := &Note{Frontmatter: fm, Body: validBody()}
+			data, err := Serialize(n)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(data)).To(ContainSubstring("superseded-by: some-other-note"))
+		})
+
+		It("omits superseded-by when empty", func() {
+			n := &Note{Frontmatter: validFrontmatter(), Body: validBody()}
+			data, err := Serialize(n)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(data)).NotTo(ContainSubstring("superseded-by"))
+		})
+	})
 })
 
 var _ = Describe("Slug", func() {

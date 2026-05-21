@@ -118,7 +118,7 @@ func Write(opts WriteOptions) (WriteResult, error) {
 
 	// Step 4: Similarity scan.
 	incomingTokens := NormalizeTokens(opts.Title)
-	candidates, err := findSimilarNotes(opts.VaultPath, incomingTokens)
+	candidates, err := FindSimilarNotes(opts.VaultPath, incomingTokens)
 	if err != nil {
 		return WriteResult{}, fmt.Errorf("similarity scan: %w", err)
 	}
@@ -131,7 +131,7 @@ func Write(opts WriteOptions) (WriteResult, error) {
 	}
 
 	// Step 5: Wikilink resolution warnings.
-	warnings := resolveWikilinks(opts.VaultPath, opts.Body)
+	warnings := ResolveWikilinks(opts.VaultPath, opts.Body)
 
 	// Step 6: Generate path with collision handling.
 	slug := Slug(opts.Title)
@@ -166,7 +166,7 @@ func Write(opts WriteOptions) (WriteResult, error) {
 	}
 
 	// Step 8: Append log entry.
-	if err := appendLog(opts.VaultPath, opts.EpistemicType, slug, sourceAgent); err != nil {
+	if err := AppendLog(opts.VaultPath, "write", opts.EpistemicType, slug, sourceAgent); err != nil {
 		return WriteResult{}, fmt.Errorf("append log: %w", err)
 	}
 
@@ -178,9 +178,9 @@ func Write(opts WriteOptions) (WriteResult, error) {
 	}, nil
 }
 
-// findSimilarNotes scans _inbox/ and notes/ for .md files and returns any
+// FindSimilarNotes scans _inbox/ and notes/ for .md files and returns any
 // whose title Jaccard similarity against incomingTokens is ≥ 0.7.
-func findSimilarNotes(vaultPath string, incomingTokens []string) ([]SimilarNote, error) {
+func FindSimilarNotes(vaultPath string, incomingTokens []string) ([]SimilarNote, error) {
 	var candidates []SimilarNote
 
 	dirs := []string{
@@ -231,17 +231,29 @@ func findSimilarNotes(vaultPath string, incomingTokens []string) ([]SimilarNote,
 	return candidates, nil
 }
 
-// resolveWikilinks extracts wikilinks from body and returns a warning for each
-// that cannot be resolved to an existing vault file.
-func resolveWikilinks(vaultPath, body string) []string {
+// ResolveWikilinks extracts wikilinks from body and returns a warning for each
+// that cannot be resolved to an existing vault file. It scans _inbox/,
+// notes/, and _deprecated/ (excluding _meta/).
+//
+// Inbox files match if the filename ends with -{slug}.md.
+// Notes and deprecated files match if the filename is exactly {slug}.md.
+func ResolveWikilinks(vaultPath, body string) []string {
 	links := ExtractWikilinks(body)
 	var warnings []string
 
-	// Read _inbox/ entries once, outside the per-link loop (M-3).
+	// Read _inbox/ entries once, outside the per-link loop.
 	inboxDir := filepath.Join(vaultPath, "_inbox")
 	inboxEntries, err := os.ReadDir(inboxDir)
 	if err != nil && !os.IsNotExist(err) {
 		warnings = append(warnings, fmt.Sprintf("warning: could not read _inbox dir: %v", err))
+		return warnings
+	}
+
+	// Read _deprecated/ entries once.
+	deprecatedDir := filepath.Join(vaultPath, "_deprecated")
+	deprecatedEntries, err := os.ReadDir(deprecatedDir)
+	if err != nil && !os.IsNotExist(err) {
+		warnings = append(warnings, fmt.Sprintf("warning: could not read _deprecated dir: %v", err))
 		return warnings
 	}
 
@@ -254,8 +266,22 @@ func resolveWikilinks(vaultPath, body string) []string {
 			continue
 		}
 
-		// Check _inbox/*-{slug}.md (any file ending with -{slug}.md)
+		// Check _deprecated/{slug}.md
 		found := false
+		for _, e := range deprecatedEntries {
+			if e.Type()&os.ModeSymlink != 0 {
+				continue
+			}
+			if e.Name() == slug+".md" {
+				found = true
+				break
+			}
+		}
+		if found {
+			continue
+		}
+
+		// Check _inbox/*-{slug}.md (any file ending with -{slug}.md)
 		for _, e := range inboxEntries {
 			if e.Type()&os.ModeSymlink != 0 {
 				continue
@@ -304,17 +330,19 @@ func resolveInboxPath(vaultPath, date, slug string) (string, error) {
 	return "", fmt.Errorf("could not find available path for slug %q", slug)
 }
 
-// appendLog appends a structured log entry to _meta/log.md, creating the file
-// and directory if they do not exist.
-func appendLog(vaultPath, epistemicType, slug, sourceAgent string) error {
+// AppendLog appends a structured log entry to _meta/log.md, creating the file
+// and directory if they do not exist. The action parameter describes the
+// operation being logged (e.g. "write", "promote", "deprecate").
+func AppendLog(vaultPath, action, epistemicType, slug, sourceAgent string) error {
 	metaDir := filepath.Join(vaultPath, "_meta")
 	if err := os.MkdirAll(metaDir, 0o755); err != nil {
 		return fmt.Errorf("create _meta dir: %w", err)
 	}
 
 	logPath := filepath.Join(metaDir, "log.md")
-	entry := fmt.Sprintf("\n## %s write | %s | %s | by:%s\n",
+	entry := fmt.Sprintf("\n## %s %s | %s | %s | by:%s\n",
 		time.Now().Format(time.RFC3339),
+		action,
 		epistemicType,
 		slug,
 		sourceAgent,

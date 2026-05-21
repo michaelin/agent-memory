@@ -1,6 +1,7 @@
 package note
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -318,5 +319,61 @@ var _ = Describe("Write", func() {
 			parsed, _ := Parse(data)
 			Expect(parsed.Frontmatter.SourceAgent).To(Equal("explicit-agent"))
 		})
+	})
+})
+
+var _ = Describe("ResolveWikilinks", func() {
+	var vaultPath string
+
+	BeforeEach(func() {
+		var err error
+		vaultPath, err = os.MkdirTemp("", "vault-resolve-*")
+		Expect(err).NotTo(HaveOccurred())
+		for _, dir := range []string{"_inbox", "notes", "_deprecated", "_meta"} {
+			Expect(os.MkdirAll(filepath.Join(vaultPath, dir), 0o755)).To(Succeed())
+		}
+	})
+
+	AfterEach(func() {
+		Expect(os.RemoveAll(vaultPath)).To(Succeed())
+	})
+
+	It("returns a warning for an unresolved wikilink", func() {
+		warnings := ResolveWikilinks(vaultPath, "See [[ghost-note]].")
+		Expect(warnings).To(ContainElement(ContainSubstring("ghost-note")))
+	})
+
+	It("resolves a wikilink to a notes/ file", func() {
+		slug := Slug("NotesTarget")
+		Expect(os.WriteFile(filepath.Join(vaultPath, "notes", slug+".md"), []byte("body"), 0o644)).To(Succeed())
+		warnings := ResolveWikilinks(vaultPath, fmt.Sprintf("See [[%s]].", "NotesTarget"))
+		Expect(warnings).To(BeEmpty())
+	})
+
+	It("resolves a wikilink to an _inbox/ file (date-slug naming)", func() {
+		slug := Slug("InboxTarget")
+		name := "2026-01-01-" + slug + ".md"
+		Expect(os.WriteFile(filepath.Join(vaultPath, "_inbox", name), []byte("body"), 0o644)).To(Succeed())
+		warnings := ResolveWikilinks(vaultPath, fmt.Sprintf("See [[%s]].", "InboxTarget"))
+		Expect(warnings).To(BeEmpty())
+	})
+
+	It("resolves a wikilink to a _deprecated/ file", func() {
+		slug := Slug("DeprecatedTarget")
+		Expect(os.WriteFile(filepath.Join(vaultPath, "_deprecated", slug+".md"), []byte("body"), 0o644)).To(Succeed())
+		warnings := ResolveWikilinks(vaultPath, fmt.Sprintf("See [[%s]].", "DeprecatedTarget"))
+		Expect(warnings).To(BeEmpty())
+	})
+
+	It("does not resolve a wikilink to a _meta/ file", func() {
+		slug := Slug("MetaTarget")
+		Expect(os.WriteFile(filepath.Join(vaultPath, "_meta", slug+".md"), []byte("body"), 0o644)).To(Succeed())
+		warnings := ResolveWikilinks(vaultPath, fmt.Sprintf("See [[%s]].", "MetaTarget"))
+		Expect(warnings).To(ContainElement(ContainSubstring("MetaTarget")))
+	})
+
+	It("returns no warnings for an empty body", func() {
+		warnings := ResolveWikilinks(vaultPath, "no links here")
+		Expect(warnings).To(BeEmpty())
 	})
 })

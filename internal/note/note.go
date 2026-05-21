@@ -27,7 +27,7 @@ type Frontmatter struct {
 	ReviewBy            string   `yaml:"review-by"`
 	Status              string   `yaml:"status"`
 	Confidence          string   `yaml:"confidence"`
-	EpistemicType       string   `yaml:"epistemic-type"`
+	EpistemicType       string   `yaml:"type"`
 	Scope               string   `yaml:"scope"`
 	Project             string   `yaml:"project"`
 	Domain              []string `yaml:"domain"`
@@ -36,7 +36,7 @@ type Frontmatter struct {
 	VerifiedBy          string   `yaml:"verified-by"`
 	VerifiedDate        string   `yaml:"verified-date"`
 	RequiresHumanReview bool     `yaml:"requires-human-review"`
-	UpdateType          string   `yaml:"update-type"`
+	SupersededBy        string   `yaml:"superseded-by,omitempty"`
 	Targets             []string `yaml:"targets"`
 	Tags                []string `yaml:"tags"`
 }
