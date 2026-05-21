@@ -165,12 +165,13 @@ func Write(opts WriteOptions) (WriteResult, error) {
 		return WriteResult{}, fmt.Errorf("write note file: %w", err)
 	}
 
-	// Step 8: Append log entry.
+	writeSucceeded = true
+
+	// AppendLog is best-effort; failure is logged but does not abort the operation.
 	if err := AppendLog(opts.VaultPath, "write", opts.EpistemicType, slug, sourceAgent); err != nil {
-		return WriteResult{}, fmt.Errorf("append log: %w", err)
+		fmt.Fprintf(os.Stderr, "warn: append log failed for write %s: %v\n", slug, err)
 	}
 
-	writeSucceeded = true
 	return WriteResult{
 		Status:   "written",
 		Path:     path,

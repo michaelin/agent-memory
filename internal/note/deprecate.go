@@ -67,9 +67,26 @@ func Deprecate(vaultPath, slug, supersededBy string) (DeprecateResult, error) {
 			fmt.Errorf("create _deprecated dir: %w", err)
 	}
 
-	// Step 6: Write to _deprecated/{slug}.md.
+	// Step 6: Write to _deprecated/{slug}.md using O_EXCL to prevent silent
+	// overwrites and guard against concurrent deprecations of the same slug.
 	destPath := filepath.Join(deprecatedDir, slug+".md")
-	if err := os.WriteFile(destPath, serialized, 0o644); err != nil {
+	f, err := os.OpenFile(destPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err != nil {
+		if os.IsExist(err) {
+			collErr := fmt.Errorf("deprecated note already exists: %s", slug)
+			return DeprecateResult{Status: "error", Slug: slug, Error: collErr.Error()}, collErr
+		}
+		return DeprecateResult{Status: "error", Slug: slug, Error: err.Error()},
+			fmt.Errorf("write deprecated note: %w", err)
+	}
+	if _, err := f.Write(serialized); err != nil {
+		f.Close()
+		_ = os.Remove(destPath)
+		return DeprecateResult{Status: "error", Slug: slug, Error: err.Error()},
+			fmt.Errorf("write deprecated note: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(destPath)
 		return DeprecateResult{Status: "error", Slug: slug, Error: err.Error()},
 			fmt.Errorf("write deprecated note: %w", err)
 	}
