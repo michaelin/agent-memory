@@ -1,6 +1,6 @@
 # Agent Memory: Incremental Implementation Roadmap
 
-**Status:** Increments 1–3 complete. Increment 4 (Note Search) deferred. Next: Increment 5 (Librarian & Promotion).
+**Status:** Increments 1–3 and 5 complete. Increment 4 (Note Search) deferred. Next: Increment 6 (Session Initialization).
 
 Each increment is a complete vertical slice: design → research → structure → plan → work → review. Each increment is independently valuable and individually verifiable via comprehensive integration tests.
 
