@@ -54,6 +54,16 @@ func MustStat(t testing.TB, path string) os.FileInfo {
 	return info
 }
 
+// WriteTestNote writes content to a file named filename in dir and returns the full path.
+func WriteTestNote(t testing.TB, dir, filename, content string) string {
+	t.Helper()
+	path := filepath.Join(dir, filename)
+	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+		t.Fatalf("WriteTestNote: %v", err)
+	}
+	return path
+}
+
 func findModuleRoot() string {
 	dir, _ := os.Getwd()
 	for {
