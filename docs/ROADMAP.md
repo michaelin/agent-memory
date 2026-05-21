@@ -1,6 +1,6 @@
 # Agent Memory: Incremental Implementation Roadmap
 
-**Status:** Increments 1–3 complete. Increment 4 is next.
+**Status:** Increments 1–3 complete. Increment 4 (Note Search) deferred. Next: Increment 5 (Librarian & Promotion).
 
 Each increment is a complete vertical slice: design → research → structure → plan → work → review. Each increment is independently valuable and individually verifiable via comprehensive integration tests.
 
@@ -242,7 +242,9 @@ Each increment is a complete vertical slice: design → research → structure �
 
 ---
 
-## Increment 4: Note Search (Read Protocol)
+## Increment 4: Note Search (Read Protocol) — DEFERRED
+
+> **Deferred:** Postponed until the vault has enough data to validate whether a search command is the right interface vs. direct read access. The two-phase retrieval model may be over-engineered for small vaults. Revisit after real usage.
 
 **Goal:** Implement the skill and static tool so agents can find relevant notes without loading everything.
 
@@ -284,41 +286,50 @@ Each increment is a complete vertical slice: design → research → structure �
 
 ---
 
-## Increment 5: Promotion & Lifecycle (Inbox Management)
+## Increment 5: Librarian Agent & Promotion Pipeline
 
-**Goal:** Implement the promotion pipeline so notes move from inbox to verified state automatically.
+**Goal:** Implement the Librarian as a skill-triggered agent that validates, classifies, promotes, deduplicates, and maintains inbox notes. This is the critical path — without the Librarian, all notes stay in `_inbox/` forever.
 
 **What becomes possible after this increment:**
-- Notes automatically graduate from `_inbox/` to `notes/` based on their epistemic type
-- Observations promote after TTL expiry
-- Patterns promote when 2+ observations corroborate them
-- Assumptions are flagged for re-verification
-- Constraints and decisions are held for human review
-- Wikilink validation blocks promotion of broken notes
+- Notes move from `_inbox/` to `notes/` via Librarian promotion
+- Constraints and decisions require human confirmation before promotion
+- Duplicate notes are detected and handled
+- Outdated assumptions are removed when contradicted by new notes
+- Pattern notes require 2+ corroborating references
+- Synthesis notes can be created by the Librarian
 
 **Scope:**
 
-### Static Tool: `memory-promote`
-- Scans `_inbox/` for notes ready to promote
-- Promotion logic by epistemic type:
-  - `observation`: promote on TTL expiry (or immediately with `--eager`)
-  - `pattern`: promote when 2+ corroborating observations exist (shared tags/domain)
-  - `assumption`: never promote; flag on TTL expiry for re-verification
-  - `constraint`: hold with `requires-human-review: true`
-  - `decision`: hold with `requires-human-review: true`
-  - `synthesis`: not produced via inbox; not handled here
-- Wikilink validation (block promotion if unresolved links exist)
-- Log entry writing for all promotions
-- Idempotency: safe to run multiple times
+### `agent-memory promote` subcommand
+- Moves a validated note from `_inbox/` to `notes/`, sets `status: verified`
+- Called by the Librarian after validation, not directly by user agents
+- `--confirmed` flag required for `constraint` and `decision` notes
+- Refuses to promote notes with unresolved `[[wiki-links]]`
+- Writes promotion line to `_meta/log.md`
+
+### Librarian Skill Definition
+- Skill invoked by user agents as last step of workflow
+- Processes all pending inbox notes in a single pass
+- Core responsibilities per invocation:
+  - Lint check (call `agent-memory lint-note` on each inbox note)
+  - Similarity/deduplication check against existing `notes/`
+  - Promotion by epistemic type rules (see design doc §5.5)
+  - Human confirmation flow for constraints/decisions (via agent tool call)
+  - Deprecation of replaced notes (forward link)
+  - Assumption outdating when contradicted by new notes
 
 ### Verification (Integration Tests)
-- **TTL-based promotion:** Write observation, mock time passage, run promote, verify promotion
-- **Corroboration-based promotion:** Write 2 observations with shared tags, run promote, verify pattern promotion
-- **Assumption flagging:** Write assumption, run promote, verify it stays in inbox with flag
-- **Constraint gating:** Write constraint, run promote, verify it stays in inbox with `requires-human-review: true`
-- **Decision gating:** Write decision, run promote, verify it stays in inbox with `requires-human-review: true`
-- **Wikilink blocking:** Write note with unresolved links, run promote, verify it's blocked
-- **Idempotency:** Run promote twice, verify same result
+- **Observation promotion:** Write observation, run Librarian, verify promotion to `notes/`
+- **Pattern promotion:** Write pattern referencing 2+ notes, verify promotion
+- **Pattern rejection:** Write pattern with <2 references, verify stays in inbox
+- **Constraint gating:** Write constraint, verify Librarian requests human confirmation
+- **Decision gating:** Write decision, verify same confirmation flow
+- **Assumption promotion:** Write assumption, verify promotion (stays as assumption type)
+- **Duplicate detection:** Write duplicate note, verify Librarian detects and handles it
+- **Wikilink blocking:** Write note with unresolved links, verify promotion blocked
+- **Replacement flow:** Write replacement note, verify old note deprecated with forward link
+- **Lint failure:** Write malformed note, verify Librarian rejects it
+- **Idempotency:** Run Librarian twice, verify same result
 
 ---
 
@@ -442,72 +453,44 @@ Each increment is a complete vertical slice: design → research → structure �
 
 ---
 
-## Increment 9: Librarian Agent (Escalation Handler)
+## Increment 9: Librarian Enhancements (Tagging, Pattern Detection, Synthesis)
 
-**Goal:** Implement the Librarian agent to handle high-stakes decisions and maintenance tasks.
+> **Prerequisite:** Increment 5 (Librarian core). This increment adds advanced Librarian capabilities on top of the core promotion pipeline.
+
+**Goal:** Extend the Librarian with tag management, pattern detection from observations, and synthesis page drafting.
 
 **What becomes possible after this increment:**
-- High-stakes notes (constraints, decisions) can be reviewed and promoted
-- Contested notes can be resolved
-- Untagged notes can be tagged
-- Pattern candidates can be detected
-- Synthesis pages can be drafted
+- Untagged notes are tagged by the Librarian
+- Pattern candidates are detected from clusters of observations
+- Synthesis pages are drafted for dense topic areas
 
 **Scope:**
 
-### Librarian Agent Definition
-- Standalone global agent (e.g., `~/.config/opencode/agent/librarian.md`)
-- Permissions:
-  - Read: vault path
-  - Write: vault path only
-  - Bash: `memory-*` and `lint-*` binaries on vault directory
-  - Task: deny (leaf subagent)
+### Tag Management (`agent-memory tag`)
+- Librarian assigns tags to untagged promoted notes
+- Tag taxonomy management (accept, reject, alias)
+- Updates `_meta/tag-taxonomy.md`
 
-### Librarian Tasks
-- **High-stakes review:** Review notes with `requires-human-review: true`
-  - Read the note
-  - Search for related existing notes
-  - Recommend promote/reject to human
-  - Human confirms, Librarian executes
-- **Contested resolution:** Review notes in `_contested/`
-  - Read both conflicting notes
-  - Reason about which is correct (or if both are valid)
-  - Recommend resolution to human
-  - Human confirms, Librarian executes
-- **Tagging:** Assign tags to untagged notes
-  - Read untagged notes
-  - Assign tags based on content and domain
-  - Use `memory-tag` tool to update tags
-- **Pattern detection:** Detect pattern candidates from observations
-  - Read recent observation notes
-  - Identify clusters of corroborating claims
-  - Draft pattern notes for human review
-- **Synthesis drafting:** Draft synthesis pages
-  - Read contributing notes
-  - Compose synthesis prose
-  - Use `memory-synthesize` tool to create/update page
+### Pattern Detection
+- Librarian reads recent observations, identifies clusters
+- Drafts pattern notes for human review
 
-### Static Tools (Librarian-only)
-- `memory-tag`: Tag taxonomy management
-  - Assign tags to notes
-  - Accept new tags into taxonomy
-  - Reject tags with optional redirect
-- `memory-curate`: Structure high-stakes inbox items
-  - Read note with `requires-human-review: true`
-  - Search for related notes
-  - Produce promote/reject recommendation
-- `memory-synthesize`: Generate synthesis page scaffolds
-  - Takes entity slug or tag
-  - Gathers contributing notes
-  - Generates scaffold (deterministic parts)
-  - In `--draft` mode, leaves prose section blank for Librarian
+### Synthesis Drafting (`agent-memory synthesize`)
+- Gathers contributing notes for an entity/tag
+- Generates scaffold with deterministic parts
+- Librarian fills prose section
+
+### Contested Resolution
+- Reviews notes in `_contested/`
+- Recommends resolution to human
+- Human confirms, Librarian executes
 
 ### Verification (Integration Tests)
-- **High-stakes review:** Create constraint note, verify Librarian can review and promote
-- **Contested resolution:** Create two conflicting notes, verify Librarian can resolve
-- **Tagging:** Create untagged notes, verify Librarian can tag them
-- **Pattern detection:** Create observation notes, verify Librarian can detect patterns
-- **Synthesis drafting:** Create notes for entity, verify Librarian can draft synthesis
+- **Tagging:** Create untagged promoted notes, verify Librarian assigns tags
+- **Tag taxonomy:** Verify accept/reject/alias operations update taxonomy file
+- **Pattern detection:** Create observation cluster, verify Librarian drafts pattern note
+- **Synthesis drafting:** Create notes for entity, verify Librarian drafts synthesis page
+- **Contested resolution:** Create conflicting notes, verify Librarian recommends resolution
 
 ---
 
@@ -679,37 +662,36 @@ After each increment is complete, we'll have a working, tested feature that's in
 
 ## Implementation Sequence
 
-**Phase 1: Foundation (Increments 1-2)**
-- Vault scaffolding and configuration
-- Note format and validation
-- Ready for agents to write notes
+**Phase 1: Foundation (Increments 1–3) ✅**
+- Vault scaffolding and initialization
+- Note format and frontmatter parsing
+- Note writing (write protocol)
+- Agents can write validated notes to `_inbox/`
 
-**Phase 2: Core Functionality (Increments 3-6)**
-- Note writing (skill + tool)
-- Note search (skill + tool)
-- Promotion and lifecycle
-- Session initialization
-- Agents can now use the vault for reading and writing
+**Phase 2: Librarian & Promotion (Increment 5)**
+- Librarian agent (skill-triggered)
+- Promotion pipeline (all epistemic types)
+- Human confirmation for constraints/decisions
+- Deduplication and assumption outdating
+- Notes can now move from `_inbox/` to `notes/`
 
-**Phase 3: Maintenance (Increments 7-8)**
+**Phase 3: Search & Context (Increments 4, 6)**
+- Note search — simple frontmatter/tag filter tool (Increment 4, revised scope)
+- Session initialization and context loading (Increment 6)
+- Agents can find and load relevant notes
+
+**Phase 4: Maintenance (Increments 7–8)**
 - Index and constraint maintenance
 - Linting and integrity checks
 - Vault stays healthy as it grows
 
-**Phase 4: Intelligence (Increment 9)**
-- Librarian agent
-- High-stakes review and resolution
-- Pattern detection and synthesis
-- Vault becomes smarter over time
-
-**Phase 5: Operations (Increments 10-12)**
+**Phase 5: Operations (Increments 10–12)**
 - Backup and recovery
 - Semantic search
 - Vault archival
 - Vault is production-ready
 
-**Phase 6: Stabilization (Increments 13-14)**
+**Phase 6: Stabilization (Increments 13–14)**
 - Global vault init (`--global` flag)
 - Template customization with config directory
-- Git-config-style config inheritance
 - Vault is user-customizable

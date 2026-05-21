@@ -823,20 +823,33 @@ inbox placement, log writing, lint gating — happens inside the tool.
 6. **Log entry.** Append one line to `_meta/log.md`:
    `## [YYYY-MM-DD HH:MM] write | <type> | <slug> | by:<agent>`.
 
-**Inbox lifecycle (handled by `agent-memory promote`, not the agent)**
+**Inbox lifecycle (handled by the Librarian agent)**
 
-The agent's responsibility ends at the inbox write. Promotion happens
-out-of-session via the `agent-memory promote` tool, run on a `session-end` hook,
-a cron, or manually by the human:
+The agent's responsibility ends at the inbox write. Promotion is handled
+by the Librarian agent, invoked by the user agent as a skill at the end
+of its workflow. The Librarian checks every inbox note for completeness,
+uniqueness, and lint validity before promoting.
 
-| Epistemic type | Promotion action |
+| Epistemic type | Promotion rule |
 |---|---|
-| `observation` | Move to `notes/`, `status: verified`, on TTL expiry |
-| `pattern` | Move to `notes/`, `status: verified`, when 2+ corroborating observations exist (deterministic check on shared tags + domain) |
-| `assumption` | Stays in `_inbox/`; agents MUST re-verify before acting |
-| `constraint` | Held in `_inbox/` with `requires-human-review: true`; promoted only after human confirmation (Librarian escalation) |
-| `decision` | Held in `_inbox/` with `requires-human-review: true`; promoted only after human confirmation (Librarian escalation). The vault note is the canonical record — there is no separate ADR layer to reconcile against. |
-| `synthesis` | Not produced via `agent-memory write-note`; created/refreshed by `agent-memory synthesize` and edited by the Librarian. Auto-promoted on creation. |
+| `observation` | Librarian checks completeness, uniqueness, lint. Moves to `notes/`, `status: verified`. |
+| `pattern` | Librarian checks completeness, uniqueness, lint. Promotes only if the note references 2+ corroborating notes. Moves to `notes/`, `status: verified`. |
+| `assumption` | Librarian checks completeness, uniqueness, lint. Moves to `notes/`, `status: verified`. Stays as `epistemic-type: assumption` — it is not reclassified. User agents can later write an observation or other note that verifies or disproves the assumption; the Librarian removes outdated assumptions. |
+| `constraint` | Librarian checks completeness, uniqueness, lint. Requires human confirmation (via agent tool call based on human response). Moves to `notes/`, `status: verified` only after confirmation. |
+| `decision` | Same as constraint: Librarian checks, human confirms via agent tool call. |
+| `synthesis` | Created by the Librarian (proactively during maintenance, or on agent request). Auto-promoted on creation. |
+
+**Trigger model:** The user agent invokes the Librarian skill as the
+last step of its workflow, after writing one or more notes. The
+`agent-memory instructions` output tells agents about this flow. The
+Librarian processes all pending inbox notes in a single pass.
+
+**Future: decoupled service model.** The skill-invocation trigger is the
+initial implementation. A future iteration may run the Librarian as a
+background service (triggered by filesystem watch, session-end hook, or
+cron) so that promotion does not block the user agent's workflow. The
+Librarian's logic is the same in both models; only the trigger mechanism
+changes.
 
 **Decisions are vault-native.** Earlier drafts of this design defined an
 ADR-conflict reconciliation protocol against a separate `docs/adr/` layer.
@@ -855,44 +868,42 @@ believed and when.
 
 ---
 
-**Correction and amendment protocol**
+**Correction and amendment protocol — replacement only**
 
-When `memory-write --update=<slug>` is invoked, the tool routes the
-correction by the *target* note's epistemic type. The Librarian is
-involved only for supersession of high-stakes types:
+Notes are never edited in place. When knowledge changes, the user agent
+writes a new note that replaces the old one. The new note references the
+old note via `[[old-slug]]` in its `## Related` section. The Librarian
+handles the lifecycle transition:
 
-| Target epistemic type | Update method | Who applies it |
-|---|---|---|
-| `observation` | In-place edit | `agent-memory write-note` directly: edits target, bumps `updated`, appends to `## Change log`, writes log entry |
-| `pattern` | In-place edit | `agent-memory write-note` directly |
-| `synthesis` | In-place edit | `agent-memory write-note` directly (or `agent-memory synthesize` regeneration) |
-| `assumption` | Supersession | Librarian (escalated) — preserves the chain of wrong beliefs |
-| `constraint` | Supersession | Librarian (escalated) — corrected constraint remains visible as a cautionary record |
-| `decision` | Supersession | Librarian (escalated) — decisions have formal history; the old decision informs the new one |
+1. User agent writes a new note to `_inbox/` with updated content.
+2. Librarian detects that the new note replaces an existing note (via
+   similarity check, explicit reference, or agent-supplied metadata).
+3. Librarian promotes the new note to `notes/` with `status: verified`.
+4. Librarian sets the old note to `status: deprecated` with a forward
+   link to the replacement.
+5. For `constraint` and `decision` notes, the human confirms the
+   replacement before the Librarian acts (via agent tool call).
 
-**In-place edit (tool-applied):** `agent-memory write-note` edits the target note
-directly, updates `updated`, appends a one-line entry to a `## Change log`
-section, and writes a `correction | <type> | <slug>` line to `_meta/log.md`.
-No inbox staging; no Librarian involvement. Git sees a single-file content
-diff.
+The deprecated note is never deleted — future agents follow the link
+forward. This preserves the full audit trail of what agents believed
+and when.
 
-**Supersession (Librarian-applied):** When `memory-write --update=<slug>`
-targets a high-stakes note (`constraint`, `decision`, `assumption`), the
-tool routes to staging instead of in-place edit: it writes a correction
-note to `_inbox/` with `update-type: supersedes` and `targets:
-[[old-slug]]`, sets `requires-human-review: true`, and logs the staging.
-The Librarian (invoked when this appears in `_inbox/`) creates the
-replacement note in `notes/` with `status: verified`, sets the original
-to `status: superseded` with a forward link, and removes the inbox
-staging note. The superseded note is never deleted — future agents follow
-the link forward.
+**Assumption outdating:** When a user agent writes an observation or
+other note that verifies or disproves an assumption, the assumption
+becomes outdated. The Librarian detects this (via reference or
+similarity) and removes the outdated assumption from `notes/`. An
+archive mechanism may be introduced in a future increment.
 
 ---
 
 ### 5.6 Staleness prevention
 
 Every note has a `review-by` date assigned automatically by `agent-memory write-note`
-based on `epistemic-type`. The defaults:
+based on `epistemic-type`. This date is a **staleness indicator only** — it
+signals when a note should be re-verified, not when it gets promoted.
+Promotion is handled by the Librarian (§5.5), not by TTL expiry.
+
+The default TTL values (configurable in a future increment):
 
 | Epistemic type | Default TTL | Reasoning |
 |---|---|---|
@@ -903,8 +914,12 @@ based on `epistemic-type`. The defaults:
 | `assumption` | 30 days | Assumptions must be challenged frequently |
 | `synthesis` | none | Regenerable from contributing notes; no fixed expiry |
 
+Search results include a `days_to_stale` field for each note: positive
+values indicate days remaining until `review-by`, negative values indicate
+days overdue. This lets agents assess trustworthiness without parsing dates.
+
 The staleness scan runs deterministically inside `agent-memory context` at
-session start (and as `lint-vault --stale` on demand). Stale notes are
+session start (and as `agent-memory lint-vault --stale` on demand). Stale notes are
 surfaced to the calling agent before work begins. No agent reasoning is
 involved in detecting staleness.
 
@@ -914,21 +929,22 @@ involved in detecting staleness.
 
 This design is deliberately agent-agnostic. The only role it defines is
 the Librarian (§5.8). Every other agent in any framework participates
-through the same three tools:
+through the same tools:
 
-- **Reading agents** — any agent that needs context. Calls `agent-memory context`
-  once at session start to load Core + indices + staleness list + recent
-  log tail in a single tool call. Calls `agent-memory search` on demand during
-  work for two-phase retrieval.
 - **Writing agents** — any agent that produces durable findings. Calls
   `agent-memory write-note` with the chosen epistemic type, claim body, evidence,
-  source-artifact, and one of `--new-claim`/`--update`/`--contest`. The
-  tool handles everything else.
-- **The Librarian** — invoked only on maintenance triggers or human request:
-  high-stakes promotions (`constraint`, `decision`), supersession of
-  high-stakes notes, contested-note resolution, tagging untagged notes,
-  detecting pattern candidates from recent observations, drafting prose
-  for synthesis pages the tools have scaffolded.
+  and source-artifact. The tool handles everything else. As the last step
+  of its workflow, the agent invokes the Librarian skill to process
+  pending inbox notes.
+- **Reading agents** — any agent that needs context. Calls `agent-memory context`
+  once at session start to load Core + indices + staleness list + recent
+  log tail in a single tool call. Can use `agent-memory search` for
+  frontmatter/tag filtering to discover relevant notes, then read files
+  directly for full content.
+- **The Librarian** — invoked by user agents as a skill after writing
+  notes. Handles promotion (all types), deduplication, assumption
+  outdating, human confirmation for constraints/decisions, tagging,
+  pattern detection, synthesis, and optional maintenance.
 
 **Mapping to a multi-agent setup.** A typical hierarchy might map roles as:
 
@@ -952,36 +968,55 @@ source-artifact, and confidence.
 
 ### 5.8 The Librarian agent
 
-The Librarian is the one role this design defines. Its scope is
-deliberately small: it is an LLM escalation handler for the cases where
-deterministic tooling cannot decide. Routine maintenance — promotion,
-indexing, logging, staleness, frontmatter, TTL, source-artifact
-verification — is owned by the static tools (§9) and never requires the
-Librarian.
+The Librarian is the one role this design defines. It is invoked by user
+agents as a skill at the end of their workflow, after writing one or more
+notes to `_inbox/`. The Librarian processes all pending inbox notes in a
+single pass: validating, classifying, promoting, deduplicating, and
+optionally running maintenance.
 
-**Why the Librarian exists at all:**
-- Assigning tags to untagged promoted notes in `notes/` (batch, on
-  maintenance pass, using `agent-memory tag`).
-- Detecting pattern candidates by reading recent `observation` notes with
-  LLM judgment; drafting accepted candidates as `pattern` notes via
-  `memory-write --type=pattern`.
-- Reviewing synthesis gaps surfaced by `lint-vault --dense`; drafting
-  synthesis prose after `memory-synthesize --draft` has assembled the
-  scaffold.
-- Writing the supersession replacement when `memory-write --update`
-  targets a `constraint`, `decision`, or `assumption`.
-- Reviewing high-stakes inbox items (`constraint`, `decision`) and
-  surfacing a promote/reject recommendation for the human.
-- Resolving notes in `_contested/` when the contradiction is non-trivial.
+**Core responsibilities (every invocation):**
 
-**Invocation triggers** (all statically detectable — no dynamic signal
-from tools required):
-- `requires-human-review: true` found in `_inbox/` by `agent-memory promote`
-- `_contested/` directory non-empty (detected by `lint-vault --contested`)
-- `_meta/log.md` exceeds configured line-count threshold (checked by host/cron)
+1. **Validate** — check each inbox note for completeness, uniqueness, and
+   lint validity. Notes that fail are flagged with specific errors.
+2. **Promote** — move validated notes from `_inbox/` to `notes/` with
+   `status: verified`. For patterns, verify that 2+ corroborating notes
+   exist. For constraints and decisions, request human confirmation via
+   agent tool call before promoting.
+3. **Deduplicate** — detect notes that duplicate or replace existing notes.
+   Deprecate the old note with a forward link to the replacement.
+4. **Outdate assumptions** — detect assumptions in `notes/` that have been
+   verified or disproved by newly promoted notes. Remove outdated
+   assumptions (archive mechanism deferred to a future increment).
+
+**Maintenance responsibilities (Librarian decides when):**
+
+The Librarian has instructions to assess whether maintenance is needed
+based on vault state. It may choose to:
+
+- Assign tags to untagged promoted notes using `agent-memory tag`.
+- Detect pattern candidates by reading recent observation notes with
+  LLM judgment; draft accepted candidates as pattern notes.
+- Review synthesis gaps (many notes on the same topic without a synthesis
+  page); create synthesis pages proactively or on agent request.
+- Resolve notes in `_contested/` when the contradiction is non-trivial.
+- Surface stale notes (past `review-by` date) for attention.
+
+**Trigger model:**
+
+The initial implementation uses skill invocation: the user agent calls
+the Librarian skill as the last step of its workflow. The
+`agent-memory instructions` output tells agents about this flow.
+
+**Future: decoupled service model.** A future iteration may run the
+Librarian as a background service triggered by filesystem watch,
+session-end hook, or cron. This avoids blocking the user agent's
+workflow when the vault is large. The Librarian's logic is identical
+in both models; only the trigger mechanism changes. Statically
+detectable triggers for the service model:
+- New files in `_inbox/` (filesystem watch)
+- `_contested/` directory non-empty
+- `_meta/log.md` exceeds configured line-count threshold
 - Human request
-
-Most sessions do not invoke the Librarian at all.
 
 **Why no quorum on the Librarian:** The remaining judgments are either
 bounded prose drafting or a single recommendation to the human. A second
@@ -992,6 +1027,8 @@ quorum (where used) has already established the underlying claim.
 framework-portable. In OpenCode, this is
 `~/.config/opencode/agent/librarian.md`; in pi or other frameworks, the
 equivalent global agent location. It is never tied to a team manifest.
+A corresponding Librarian skill is defined so that user agents can
+invoke it as the last step of their workflow.
 
 **Permissions:**
 - `read`: allow (vault path)
@@ -1012,19 +1049,17 @@ exclusive access to:
   taxonomy (`--accept <tag> [--alias=<x,y>]`), and reject proposals
   (`--reject <tag> [--canonical=<existing>]`). Updates `_meta/tag-taxonomy.md`
   and appends a log entry.
-- `agent-memory curate` — for each high-stakes inbox item, presents the note
-  alongside relevant existing notes and produces a structured
-  promote/reject recommendation. Output is surfaced to the human; the
-  human's confirmation triggers `memory-promote --slug=<x> --confirmed`.
-- `memory-synthesize <entity>` (in draft mode) — generates a scaffold the
+- `agent-memory curate` — for each high-stakes inbox item (`constraint`,
+  `decision`), presents the note alongside relevant existing notes and
+  produces a structured promote/reject recommendation. The human's
+  confirmation is relayed back via agent tool call.
+- `agent-memory synthesize <entity>` (in draft mode) — generates a scaffold the
   Librarian then fills with prose. The non-draft mode of the same tool
   performs deterministic refresh and does not need the Librarian.
 
 All other operations the Librarian might appear to do (writing the log,
-updating an index, promoting an observation, computing TTL, scanning
-staleness) are tool side-effects, not Librarian work. Even
-`agent-memory curate` itself appends its own log entry on every invocation —
-the Librarian does not write to `_meta/log.md` directly.
+updating an index, computing TTL, scanning staleness) are tool
+side-effects, not Librarian work.
 
 ---
 
@@ -1255,37 +1290,52 @@ write inbox file, append to `_meta/log.md`. Unresolved `[[wiki-links]]` in
 the body are reported in the `warnings` array but do not block the write;
 they block promotion.
 
-**Update and contest modes (planned):** The `--update=<slug>` and
-`--contest=<slug>` flags are not yet implemented. When added, `--update`
-against an `observation`/`pattern`/`synthesis` target will apply the edit
-in place (no inbox file produced). `--contest` will stage a competing
-claim in `_contested/`. The `--new-claim` flag (explicit "I know this is
-similar but it's a distinct claim") is also planned.
+**Update and contest modes (planned):** Notes are never edited in place.
+When knowledge changes, the user agent writes a new replacement note to
+`_inbox/`. The Librarian handles deprecation of the old note and
+promotion of the replacement. The `--contest=<slug>` flag (staging a
+competing claim in `_contested/`) is also planned.
 
 #### `agent-memory search`
 
+Simple frontmatter and tag filter tool for note discovery. Returns
+metadata for matching notes; agents can then read files directly for
+full content.
+
 ```bash
-agent-memory search <query> [--type=<...>] [--project=<...>] [--phase=1|2] [--slugs=<a,b>]
+agent-memory search [<query>] [--type=<...>] [--project=<...>] [--domain=<...>] [--tag=<...>] [--status=<...>]
 ```
 
-Phase 1 returns titles + frontmatter for all matches (`status: verified`
-only, tag aliases auto-expanded). Phase 2 takes a list of slugs and
-returns bodies, capped at 10. The two-phase split is enforced by the
-subcommand; an agent cannot accidentally request all bodies at once.
+Returns a JSON array of matching notes with frontmatter fields and a
+`days_to_stale` indicator (positive = days remaining until `review-by`,
+negative = days overdue). The query, if provided, is a case-insensitive
+substring match on the note title. All filter flags are optional and
+combined with AND logic.
+
+Agents are free to use this tool for discovery or to search the vault
+directly via filesystem access. The tool is a convenience, not a gate.
+
+**Deferred: two-phase retrieval model.** The original design proposed a
+two-phase model (Phase 1 = frontmatter only, Phase 2 = body read with
+10-note cap) to prevent context overflow in large vaults. This is
+deferred until the vault has enough data to validate whether the
+complexity is warranted. The simple filter model is sufficient for now.
 
 ### 9.4 Maintenance subcommands (no LLM in the loop)
 
 #### `agent-memory promote`
 
-Runs through `_inbox/` and applies the promotion table from §5.5:
-- `observation`: promote on TTL expiry (configurable: also promote on first
-  successful `agent-memory lint-note` if `--eager` is passed).
-- `pattern`: promote when 2+ corroborating observation notes exist (shared
-  domain + tag overlap above threshold).
-- `assumption`: never promotes; flagged on TTL expiry for re-verification.
-- `constraint`, `decision`: held; only promoted with `--confirmed --slug=<x>`
-  (issued by the human after `agent-memory curate` review).
-- `synthesis`: not produced via inbox; not handled here.
+Moves a validated note from `_inbox/` to `notes/` and sets
+`status: verified`. Called by the Librarian after validation, not
+directly by user agents.
+
+```bash
+agent-memory promote --slug=<slug> [--confirmed]
+```
+
+The `--confirmed` flag is required for `constraint` and `decision` notes
+(human confirmation relayed via agent tool call). For all other types,
+the Librarian calls `promote` after its own validation pass.
 
 For all types: **refuses to promote any note with unresolved `[[wiki-links]]`
 in its body**. The agent is notified at write time via the `warnings` array;
@@ -1293,8 +1343,10 @@ promotion is the hard gate.
 
 Writes a promotion line to `_meta/log.md` for every action.
 
-Intended invocation: `session-end` hook (where available), nightly cron,
-or manual by the human. Never invoked by an in-session agent.
+**Future: decoupled service model.** In the initial implementation, the
+Librarian is invoked as a skill by the user agent and calls `promote`
+directly. A future iteration may run the Librarian as a background
+service, but the `promote` subcommand interface remains the same.
 
 #### `agent-memory reindex`
 
@@ -1461,26 +1513,27 @@ All questions from the initial design phase are closed.
 | Cross-project scope | Cross-project and cross-agent from the start; all classification in frontmatter |
 | Wikilinks | Live `[[wiki-links]]` written directly by agents; unresolved links reported as warnings by `agent-memory write-note`, hard-blocked at promotion by `agent-memory promote`; `lint-vault --links` covers both `notes/` and `_inbox/` |
 | Epistemic types | Six types: observation, pattern, constraint, decision, assumption, synthesis |
-| HITL scope | `constraint` and `decision` only; all others auto-promote on TTL expiry or corroboration |
+| HITL scope | `constraint` and `decision` require human confirmation (via agent tool call) before Librarian promotes. All other types promoted by Librarian after completeness/uniqueness/lint checks — no TTL-based auto-promote. |
 | Decision records | Vault-native; no separate ADR layer or reconciliation protocol. External decision records (if a project keeps them) are cited as `source-artifact`. |
 | Static-tooling principle | Tool owns form, agent owns content; all deterministic work lives in Go subcommands |
 | Tag assignment | Agents do not supply tags; tags are assigned by the Librarian on its maintenance pass using `agent-memory tag` |
 | Log file | `_meta/log.md`, append-only, written by tools (`agent-memory write-note`, `agent-memory promote`, `agent-memory tag`), never by agents |
 | Index maintenance | `agent-memory reindex` regenerates from frontmatter scan; not Librarian work |
-| Promotion | `agent-memory promote` runs out-of-session (hook/cron/human); not Librarian work |
-| Librarian role | Tagging, pattern detection, synthesis prose, supersession of high-stakes notes, high-stakes inbox review, contested resolution |
-| Librarian triggers | `requires-human-review: true` in `_inbox/`; `_contested/` non-empty; log-size threshold; human request. No dynamic `requires_llm` signal. |
+| Promotion | Librarian-driven. User agent invokes Librarian skill after writing notes. Librarian checks completeness, uniqueness, lint, then promotes. No TTL-based auto-promote; `review-by` is a staleness indicator only. |
+| Librarian role | Validation, classification, promotion (all types), deduplication, assumption outdating, human confirmation for constraints/decisions, tagging, pattern detection, synthesis, optional maintenance. |
+| Librarian triggers | User agent invokes Librarian skill as last step of workflow. Future: decoupled background service (filesystem watch, session-end hook, cron). |
+| Correction/amendment | Replacement only — no in-place edits. New note replaces old; Librarian deprecates old note with forward link. Full audit trail preserved. |
 | Pattern detection | Librarian task using LLM judgment on its maintenance pass; no deterministic binary |
-| Synthesis triggers | Log-size threshold (Librarian maintenance pass); `lint-vault --dense` (note density); human request |
-| Librarian placement | Standalone global agent (e.g. `~/.config/opencode/agent/librarian.md`); no team manifest |
+| Synthesis triggers | Librarian creates proactively during maintenance or on agent request; `lint-vault --dense` surfaces areas needing synthesis |
+| Librarian placement | Skill invoked by user agents; defined as a Claude Code skill. No standalone agent or team manifest. |
 | Agent-framework coupling | Design is framework-agnostic; only the Librarian role is defined here |
 | Harness hooks | Agent-instruction baseline only; hooks documented as optional enhancements |
-| Tooling | Go module `github.com/michaelin/agent-memory`; single binary with subcommands ([ADR-0001](adr/adr-0001-single-binary-with-subcommands.md)); agent-facing trio (`context`, `write-note`, `search`) + maintenance + lint subcommands; `tag` for Librarian taxonomy work |
+| Tooling | Go module `github.com/michaelin/agent-memory`; single binary with subcommands ([ADR-0001](adr/adr-0001-single-binary-with-subcommands.md)); agent-facing subcommands (`context`, `write-note`, `search`) + maintenance (`promote`, `reindex`, `tag`, `synthesize`, `curate`) + lint subcommands |
 | Git in vault | No git; vault is plain files; durability via `agent-memory backup` |
 | `git init` during init | Dropped; `init` is a plain file/folder scaffold from embedded templates |
 | Module path | `github.com/michaelin/agent-memory` (public repo) |
 | Memory consolidation | `agent-memory reindex` covers deterministic parts; richer consolidation deferred |
-| Dreaming / pattern promotion | Librarian task on maintenance pass; no deterministic binary |
+| Dreaming / pattern promotion | Librarian task during promotion pass; detects pattern candidates from recent observations using LLM judgment |
 
 ---
 
