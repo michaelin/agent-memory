@@ -591,6 +591,24 @@ This mirrors how `.git/` works: the directory is the artifact. Any tool
 that can find the directory can use the vault — no per-tool or per-project
 config file to maintain.
 
+**Global vault init (deferred — Increment 13):** The `init` command will
+gain a `--global` / `-g` flag to create the vault under
+`$XDG_DATA_HOME/agent-memory` (falling back to `$HOME/.local/share/agent-memory`
+or `$HOME/.agent-memory`). An optional folder name argument replaces the
+default name in the resolved path (e.g. `agent-memory init -g work` →
+`~/.local/share/work/`). This is a stabilization feature, not on the
+critical path.
+
+**Template customization (deferred — Increment 14):** A config directory
+(global at `$XDG_CONFIG_HOME/agent-memory/`, per-vault at
+`.agent-memory/_config/`) will hold user-editable templates with
+git-config-style inheritance (per-vault → global → embedded defaults).
+`agent-memory init` will populate config with embedded defaults on first
+run. Lint rules will need to either read valid values from config or
+remain template-agnostic — that design decision is deferred to the
+increment's QRSPI cycle. This is a stabilization feature, not on the
+critical path.
+
 **Vault discovery (for subcommands that need to locate an existing vault):**
 The resolution order is:
 

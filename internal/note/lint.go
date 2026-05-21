@@ -78,7 +78,6 @@ var ruleNF001 = Rule{
 			{"confidence", n.Frontmatter.Confidence},
 			{"epistemic-type", n.Frontmatter.EpistemicType},
 			{"scope", n.Frontmatter.Scope},
-			{"source-agent", n.Frontmatter.SourceAgent},
 			{"source-artifact", n.Frontmatter.SourceArtifact},
 		}
 		var msgs []string

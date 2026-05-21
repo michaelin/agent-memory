@@ -1,6 +1,6 @@
 # Agent Memory: Incremental Implementation Roadmap
 
-**Status:** Increment 1 complete. Increment 2 is next.
+**Status:** Increments 1–3 complete. Increment 4 is next.
 
 Each increment is a complete vertical slice: design → research → structure → plan → work → review. Each increment is independently valuable and individually verifiable via comprehensive integration tests.
 
@@ -601,6 +601,65 @@ Each increment is a complete vertical slice: design → research → structure �
 
 ---
 
+## Increment 13: Global Vault Init (Stabilization)
+
+**Goal:** Support `agent-memory init --global` to create vaults under `$XDG_DATA_HOME/agent-memory` or `$HOME/.agent-memory`.
+
+**What becomes possible after this increment:**
+- Users can create a global vault without specifying a full path
+- Optional folder name argument replaces the default folder name under the global path
+- Vault discovery already handles the global fallback; this makes creation ergonomic
+
+**Scope:**
+
+### CLI Enhancement: `agent-memory init --global [name]`
+- `--global` / `-g` flag on `init` command
+- Resolves target: `$XDG_DATA_HOME/agent-memory` → `$HOME/.local/share/agent-memory` → `$HOME/.agent-memory`
+- Optional `name` argument replaces `agent-memory` in the resolved path (e.g. `init -g work` → `~/.local/share/work/`)
+- All other init behavior unchanged (idempotent, `--force`, embedded templates)
+
+### Verification (Integration Tests)
+- **Default global path:** `init -g` creates vault at XDG-compliant path
+- **Custom name:** `init -g work` creates vault at expected path
+- **XDG override:** `XDG_DATA_HOME` env var is respected
+- **Conflict with positional arg:** `init -g /some/path` errors clearly
+
+---
+
+## Increment 14: Template Customization (Stabilization)
+
+**Goal:** Allow users to customize vault templates via a config directory, with git-config-style inheritance.
+
+**What becomes possible after this increment:**
+- Users can override default templates without forking the binary
+- Per-vault and global config coexist with clear precedence
+- Linting remains correct regardless of template customization
+
+**Scope:**
+
+### Config Directory Structure
+- Global config: `$XDG_CONFIG_HOME/agent-memory/` (or `$HOME/.config/agent-memory/`)
+- Per-vault config: `.agent-memory/_config/`
+- Resolution order: per-vault → global → embedded defaults (git-config model)
+- `agent-memory init` populates config with embedded defaults on first run
+
+### Template Override
+- `templates/` subdirectory in config holds user-editable templates
+- `agent-memory init` uses config templates instead of embedded when present
+- Template changes do not retroactively affect existing vault files
+
+### Lint Compatibility
+- Lint rules that validate enum values must either read valid values from config or remain template-agnostic
+- Design decision needed: hardcoded rules vs. config-driven rules (to be resolved during QRSPI D phase)
+
+### Verification (Integration Tests)
+- **Default behavior:** Without config, embedded templates are used (no regression)
+- **Global override:** Custom template in global config is used by init
+- **Per-vault override:** Per-vault config takes precedence over global
+- **Lint correctness:** Lint passes/fails correctly with customized templates
+
+---
+
 ## Next Steps
 
 Each increment will be the basis of a full QRSPI process:
@@ -648,3 +707,9 @@ After each increment is complete, we'll have a working, tested feature that's in
 - Semantic search
 - Vault archival
 - Vault is production-ready
+
+**Phase 6: Stabilization (Increments 13-14)**
+- Global vault init (`--global` flag)
+- Template customization with config directory
+- Git-config-style config inheritance
+- Vault is user-customizable
