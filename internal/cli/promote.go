@@ -27,6 +27,11 @@ requires-human-review: true (constraint and decision types) require
 the --confirmed flag.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := validateSlug(slugFlag); err != nil {
+				cmd.SilenceUsage = true
+				return err
+			}
+
 			vaultPath, err := vault.Discover(vaultFlag)
 			if err != nil {
 				cmd.SilenceUsage = true

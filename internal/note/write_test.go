@@ -172,6 +172,28 @@ var _ = Describe("Write", func() {
 		})
 	})
 
+	Context("AppendLog failure is best-effort", func() {
+		It("preserves the note file and returns status written even when AppendLog cannot write", func() {
+			if os.Getuid() == 0 {
+				Skip("skipping: running as root")
+			}
+
+			metaDir := filepath.Join(vaultPath, "_meta")
+			Expect(os.Chmod(metaDir, 0o555)).To(Succeed())
+			defer os.Chmod(metaDir, 0o755) //nolint:errcheck // best-effort restore for cleanup
+
+			opts := validWriteOpts(vaultPath)
+			result, err := Write(opts)
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.Status).To(Equal("written"))
+			Expect(result.Path).NotTo(BeEmpty())
+
+			_, statErr := os.Stat(result.Path)
+			Expect(statErr).NotTo(HaveOccurred())
+		})
+	})
+
 	Context("log entry", func() {
 		It("appends an entry to _meta/log.md", func() {
 			opts := validWriteOpts(vaultPath)

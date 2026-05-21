@@ -130,6 +130,28 @@ var _ = Describe("Deprecate", func() {
 		})
 	})
 
+	Context("collision: _deprecated/ file already exists", func() {
+		It("returns an error containing 'already exists' and leaves the original note intact", func() {
+			slug := "collision-test-note"
+			notePath := filepath.Join(vaultPath, "notes", slug+".md")
+			Expect(os.WriteFile(notePath, validNoteContent("Collision Test Note"), 0o644)).To(Succeed())
+
+			// Pre-create the destination to trigger the collision.
+			deprecatedDir := filepath.Join(vaultPath, "_deprecated")
+			Expect(os.MkdirAll(deprecatedDir, 0o755)).To(Succeed())
+			Expect(os.WriteFile(filepath.Join(deprecatedDir, slug+".md"), []byte("existing"), 0o644)).To(Succeed())
+
+			result, err := Deprecate(vaultPath, slug, "")
+
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("already exists"))
+			Expect(result.Status).To(Equal("error"))
+
+			// Original note must still be present — no destructive side effect.
+			Expect(notePath).To(BeAnExistingFile())
+		})
+	})
+
 	Context("rollback on notes/ remove failure", func() {
 		It("removes the _deprecated/ file if notes/ remove fails", func() {
 			if os.Getuid() == 0 {
