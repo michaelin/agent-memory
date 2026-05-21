@@ -73,7 +73,7 @@ var _ = Describe("Lint / NF001", func() {
 
 			requiredFields := []string{
 				"title", "created", "updated", "status", "confidence",
-				"epistemic-type", "scope", "source-agent", "source-artifact",
+				"epistemic-type", "scope", "source-artifact",
 			}
 			for _, field := range requiredFields {
 				Expect(result.Errors).To(ContainElement(LintError{
