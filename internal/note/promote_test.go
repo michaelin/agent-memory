@@ -364,4 +364,29 @@ none
 			Expect(result.Error).To(ContainSubstring("ambiguous"))
 		})
 	})
+
+	Context("rollback on inbox remove failure", func() {
+		It("removes the notes/ file if inbox remove fails", func() {
+			if os.Getuid() == 0 {
+				Skip("cannot test permission denial as root")
+			}
+			slug := "test-observation-note"
+			inboxPath := filepath.Join(vaultPath, "_inbox", inboxFilename(slug))
+			Expect(os.WriteFile(inboxPath, validObservationNoteBytes(), 0o644)).To(Succeed())
+
+			// Make _inbox/ read-only so os.Remove(inboxPath) will fail.
+			inboxDir := filepath.Join(vaultPath, "_inbox")
+			Expect(os.Chmod(inboxDir, 0o555)).To(Succeed())
+			defer os.Chmod(inboxDir, 0o755) // restore for cleanup
+
+			result, err := Promote(vaultPath, slug, false)
+			Expect(err).To(HaveOccurred())
+			Expect(result.Status).To(Equal("error"))
+			Expect(result.Error).To(ContainSubstring("remove inbox file"))
+
+			// Rollback: notes/ file must NOT exist.
+			notesPath := filepath.Join(vaultPath, "notes", slug+".md")
+			Expect(notesPath).NotTo(BeAnExistingFile())
+		})
+	})
 })

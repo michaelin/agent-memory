@@ -129,4 +129,29 @@ var _ = Describe("Deprecate", func() {
 			Expect(filepath.Join(deprecatedDir, slug+".md")).To(BeAnExistingFile())
 		})
 	})
+
+	Context("rollback on notes/ remove failure", func() {
+		It("removes the _deprecated/ file if notes/ remove fails", func() {
+			if os.Getuid() == 0 {
+				Skip("cannot test permission denial as root")
+			}
+			slug := "rollback-test-note"
+			notePath := filepath.Join(vaultPath, "notes", slug+".md")
+			Expect(os.WriteFile(notePath, validNoteContent("Rollback Test Note"), 0o644)).To(Succeed())
+
+			// Make notes/ read-only so os.Remove(notePath) will fail.
+			notesDir := filepath.Join(vaultPath, "notes")
+			Expect(os.Chmod(notesDir, 0o555)).To(Succeed())
+			defer os.Chmod(notesDir, 0o755) // restore for cleanup
+
+			result, err := Deprecate(vaultPath, slug, "")
+			Expect(err).To(HaveOccurred())
+			Expect(result.Status).To(Equal("error"))
+			Expect(result.Error).To(ContainSubstring("remove original note"))
+
+			// Rollback: _deprecated/ file must NOT exist.
+			deprecatedPath := filepath.Join(vaultPath, "_deprecated", slug+".md")
+			Expect(deprecatedPath).NotTo(BeAnExistingFile())
+		})
+	})
 })
