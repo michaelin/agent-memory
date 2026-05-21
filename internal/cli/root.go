@@ -17,5 +17,6 @@ func NewRootCmd() *cobra.Command {
 	cmd.PersistentFlags().BoolVar(&jsonOutput, "json", false, "Output machine-readable JSON")
 	cmd.AddCommand(newInitCmd())
 	cmd.AddCommand(newInstructionsCmd())
+	cmd.AddCommand(newLintNoteCmd())
 	return cmd
 }
