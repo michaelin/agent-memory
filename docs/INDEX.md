@@ -10,7 +10,7 @@ This directory contains the complete design review and incremental implementatio
 
 1. **ROADMAP.md** ⭐ START HERE
    - Complete incremental implementation roadmap
-   - 12 increments organized into 5 phases
+   - 14 increments organized into 6 phases
    - Each increment is independently valuable
    - Includes scope, verification tests, and what becomes possible
 
@@ -63,7 +63,7 @@ The vault is self-describing at `.agent-memory/` — analogous to `.git/`. No co
 ### Writing Protocol Evolution
 - Increment 1: Minimal (writing not yet enabled)
 - Increment 2: Agent instructions (how to write notes)
-- Increment 3: Skill instructions (how to use the skill)
+- Increment 3: Tool instructions (write-note CLI usage, corrected enum values)
 
 ## Incremental Roadmap
 
@@ -88,6 +88,10 @@ The vault is self-describing at `.agent-memory/` — analogous to `.git/`. No co
 - Backup & recovery
 - Semantic search
 - Vault archival
+
+### Phase 6: Stabilization (Increments 13-14)
+- Global vault init
+- Template customization
 
 ## Each Increment Is Independently Valuable
 
@@ -131,4 +135,7 @@ Each increment has comprehensive integration tests covering:
 
 ## Status
 
-**Increment 1 (Vault Scaffolding) complete.** The vault discovery and initialization model is implemented. Each remaining increment can be tackled as a complete vertical slice with design, research, structure, planning, work organization, implementation, and review phases.
+**Increments 1–3 complete.**
+- Increment 1: Vault scaffolding & initialization
+- Increment 2: Note format parsing, lint rules NF001–NF007, `lint-note` CLI, writing protocol v2
+- Increment 3: `write-note` CLI, vault discovery, similarity check, wikilink extraction, harness detection, writing protocol v3

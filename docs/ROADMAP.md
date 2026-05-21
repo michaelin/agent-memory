@@ -1,6 +1,6 @@
 # Agent Memory: Incremental Implementation Roadmap
 
-**Status:** Increment 1 complete. Increment 2 is next.
+**Status:** Increments 1–3 complete. Increment 4 is next.
 
 Each increment is a complete vertical slice: design → research → structure → plan → work → review. Each increment is independently valuable and individually verifiable via comprehensive integration tests.
 
