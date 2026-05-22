@@ -1,6 +1,6 @@
 # Agent Memory: Incremental Implementation Roadmap
 
-**Status:** Increments 1–3 and 5 complete. Increment 4 (Note Search) deferred. Next: Increment 6 (Session Initialization).
+**Status:** Increments 1–3 and 5 complete. Increment 4 (Note Search) deferred. Next: Increments 6+7 (Session Initialization + Index Maintenance), then Increment 6a (OpenCode Plugin).
 
 Each increment is a complete vertical slice: design → research → structure → plan → work → review. Each increment is independently valuable and individually verifiable via comprehensive integration tests.
 
@@ -385,6 +385,74 @@ Each increment is a complete vertical slice: design → research → structure �
 
 ---
 
+## Increment 6a: OpenCode Plugin (`opencode-plugin-agent-memory`)
+
+> **Prerequisite:** Increment 6 (Session Initialization) and Increment 7 (Index Maintenance). The plugin calls `agent-memory context` for system-prompt injection and `agent-memory reindex` must have run at least once to produce indices.
+
+**Goal:** Make the memory system dynamically discoverable by all agents via an OpenCode plugin. No agent definition needs to be modified — the plugin injects context, registers tools, and triggers promotion automatically.
+
+**What becomes possible after this increment:**
+- Every agent in every session sees vault context (constraints, staleness, epistemic type guide) in its system prompt
+- Every agent can call `memory-recall` and `memory-write` tools without `bash` permissions
+- Inbox notes are promoted automatically when sessions go idle
+- The vault path is set in the shell environment for all CLI calls
+- Agents dynamically learn what types of memory notes exist and when to write them
+
+**Scope:**
+
+### Plugin Package (`opencode-plugin-agent-memory`)
+- npm package, TypeScript, published or local
+- Registered in `opencode.json` plugin array
+- Configurable via plugin options: `vault`, `inject_context`, `auto_promote`, `idle_debounce_ms`
+
+### Context Injection (`experimental.chat.system.transform` hook)
+- Runs on every LLM call
+- Calls `agent-memory context --json` to get current vault state
+- Appends to `output.system` array:
+  - One-paragraph memory system overview
+  - Constraints summary (from `_meta/constraints-summary.md`)
+  - Stale notes list (notes past `review-by` date)
+  - Epistemic type guide (what types exist, when to use each, examples)
+  - Instructions for using `memory-recall` and `memory-write` tools
+- Total injection target: < 600 tokens
+- Caches `agent-memory context` output per session (invalidated on write)
+
+### Tool Registration (`tool` hook)
+- **`memory-recall`** tool:
+  - Args: `query` (string), `project` (optional), `domain` (optional), `type` (optional)
+  - Runs `agent-memory search` internally
+  - Returns JSON array of matching note metadata (title, type, confidence, domain, slug, days_to_stale)
+  - Agents can then read specific note files for full content
+- **`memory-write`** tool:
+  - Args: `title` (string), `body` (string), `type` (string), `confidence` (optional), `domain` (optional), `project` (optional), `scope` (optional), `source_artifact` (string)
+  - Runs `agent-memory write-note` internally
+  - Returns slug, path, warnings, and any similarity-hit refusal
+  - On similarity hit: returns candidate list so the agent can decide (drop, update, reword)
+
+### Session-Idle Promotion (`event` hook)
+- Listens for `session.idle` events
+- Debounces: waits `idle_debounce_ms` (default 30s) before triggering
+- Checks if `_inbox/` contains unprocessed notes
+- If yes, invokes the Librarian via the `librarian-workflow` skill
+- Logs promotion results to plugin output
+
+### Environment Wiring (`shell.env` hook)
+- Sets `AGENT_MEMORY_VAULT` to the resolved vault path in all shell invocations
+- Ensures any `agent-memory` CLI call from any agent finds the correct vault
+
+### Verification (Integration Tests)
+- **Context injection:** Start a session, verify system prompt contains vault context
+- **Tool availability:** Verify `memory-recall` and `memory-write` tools appear in tool listing
+- **memory-recall:** Write and promote a note, call `memory-recall`, verify it's found
+- **memory-write:** Call `memory-write` tool, verify note lands in `_inbox/`
+- **Similarity handling:** Write duplicate via tool, verify refusal with candidates
+- **Session-idle promotion:** Write a note, trigger session idle, verify promotion runs
+- **Debounce:** Trigger multiple rapid idle events, verify promotion runs only once
+- **Environment:** Verify `AGENT_MEMORY_VAULT` is set in shell calls
+- **No agent modification:** Verify no agent definition references memory system directly
+
+---
+
 ## Increment 7: Index & Constraint Maintenance (Deterministic Maintenance)
 
 **Goal:** Implement the maintenance tools so indices and constraints stay current without manual work.
@@ -674,30 +742,43 @@ After each increment is complete, we'll have a working, tested feature that's in
 - Note writing (write protocol)
 - Agents can write validated notes to `_inbox/`
 
-**Phase 2: Librarian & Promotion (Increment 5)**
+**Phase 2: Librarian & Promotion (Increment 5) ✅**
 - Librarian agent (skill-triggered)
 - Promotion pipeline (all epistemic types)
 - Human confirmation for constraints/decisions
 - Deduplication and assumption outdating
 - Notes can now move from `_inbox/` to `notes/`
 
-**Phase 3: Search & Context (Increments 4, 6)**
-- Note search — simple frontmatter/tag filter tool (Increment 4, revised scope)
+**Phase 3: Context & Indices (Increments 6, 7) ← NEXT**
 - Session initialization and context loading (Increment 6)
-- Agents can find and load relevant notes
+- Index and constraint maintenance (Increment 7)
+- `agent-memory context` returns bundled session-start payload
+- `agent-memory reindex` generates indices and constraints summary
+- These two ship together: `context` without indices is useless
 
-**Phase 4: Maintenance (Increments 7–8)**
-- Index and constraint maintenance
-- Linting and integrity checks
-- Vault stays healthy as it grows
+**Phase 4: Agent Integration (Increment 6a)**
+- OpenCode plugin (`opencode-plugin-agent-memory`)
+- Dynamic context injection into all agent system prompts
+- Plugin-registered `memory-recall` and `memory-write` tools
+- Automatic session-idle promotion
+- All agents discover and use memory without definition changes
 
-**Phase 5: Operations (Increments 10–12)**
+**Phase 5: Search & Integrity (Increments 4, 8)**
+- Note search — simple frontmatter/tag filter tool (Increment 4, un-deferred)
+- Linting and integrity checks (Increment 8)
+- Agents can find notes; vault health is verifiable
+
+**Phase 6: Librarian Enhancements (Increment 9)**
+- Tagging, pattern detection, synthesis
+- Contested resolution
+
+**Phase 7: Operations (Increments 10–12)**
 - Backup and recovery
 - Semantic search
 - Vault archival
 - Vault is production-ready
 
-**Phase 6: Stabilization (Increments 13–14)**
+**Phase 8: Stabilization (Increments 13–14)**
 - Global vault init (`--global` flag)
 - Template customization with config directory
 - Vault is user-customizable

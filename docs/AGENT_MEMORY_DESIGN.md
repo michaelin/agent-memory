@@ -382,15 +382,17 @@ These are enhancements, not requirements:
 | **Claude Code** | `pre-tool-use` hook in `settings.json` | Run a shell script that injects the Core tier and project index before the first tool call |
 | **Claude Code** | `user-prompt-submit` hook | Inject top semantic matches from the vault into every prompt (requires a local search process) |
 | **Claude Code** | `session-end` hook | Trigger the Librarian's auto-promotion pass after each session |
-| **OpenCode** | No hook API currently | Rely on agent instruction baseline |
+| **OpenCode** | Plugin API (`opencode-plugin-agent-memory`) | `system.transform` hook injects context; `tool` hook registers `memory-recall`/`memory-write`; `event` hook triggers promotion on `session.idle`. See §5.9. |
 | **Cursor / Windsurf** | Rules files (`.cursorrules`, etc.) | Include a `agent-memory context` instruction in the rules file |
 | **Copilot CLI** | No hook API | Rely on agent instruction baseline |
 
-**Recommendation:** Implement the agent-instruction baseline first. It works
-everywhere and requires no framework-specific configuration. Add Claude Code
-hooks as an optional enhancement if you find the baseline is being skipped
-under context pressure. Do not build the system's correctness guarantees on
-hooks — they are an optimisation, not a foundation.
+**Recommendation:** For OpenCode, use the `opencode-plugin-agent-memory`
+plugin (§5.9) as the primary integration. It handles context injection,
+tool registration, and automatic promotion without any agent definition
+changes. The agent-instruction baseline (global `AGENTS.md`) provides
+the conceptual framework that complements the plugin's mechanical
+integration. For other frameworks, implement the agent-instruction
+baseline first and add framework-specific hooks as available.
 
 ---
 
@@ -532,7 +534,7 @@ observations are corroborating the same underlying pattern.
 binary. On its maintenance pass (triggered by log-size threshold or human
 request), the Librarian reads recent `observation` notes, applies LLM
 judgment to spot clusters of corroborating claims, and drafts `pattern`
-notes via `memory-write --type=pattern` for clusters it considers genuine.
+notes via `agent-memory write-note --type=pattern` for clusters it considers genuine.
 No threshold tuning required — the Librarian uses the same judgment a
 human reviewer would.
 
@@ -711,7 +713,7 @@ source-agent: research/analyst-a
 source-artifact: "<repo-relative path or URL of the artifact this claim came from>"
 verified-by: ""                # agent or human who promoted to verified
 verified-date: ""
-requires-human-review: false   # set true by memory-write for constraint/decision; gates memory-promote
+requires-human-review: false   # set true by agent-memory write-note for constraint/decision; gates agent-memory promote
 superseded-by: ""              # set by deprecate: wikilink to replacement note
 tags: []                       # Librarian-assigned on maintenance pass; agents leave blank
 ---
@@ -838,17 +840,11 @@ uniqueness, and lint validity before promoting.
 | `decision` | Same as constraint: Librarian checks, human confirms via agent tool call. |
 | `synthesis` | Created by the Librarian (proactively during maintenance, or on agent request). Auto-promoted on creation. |
 
-**Trigger model:** The user agent invokes the Librarian skill as the
-last step of its workflow, after writing one or more notes. The
-`agent-memory instructions` output tells agents about this flow. The
-Librarian processes all pending inbox notes in a single pass.
-
-**Future: decoupled service model.** The skill-invocation trigger is the
-initial implementation. A future iteration may run the Librarian as a
-background service (triggered by filesystem watch, session-end hook, or
-cron) so that promotion does not block the user agent's workflow. The
-Librarian's logic is the same in both models; only the trigger mechanism
-changes.
+**Trigger model:** The agent's responsibility ends at the inbox write.
+Two triggers drive Librarian invocation from that point: mid-workflow
+writes via the `memory-write` plugin tool (or skill), and automatic
+session-idle promotion via the `opencode-plugin-agent-memory` plugin
+(§5.9). See §5.8 for the full trigger model.
 
 **Decisions are vault-native.** Earlier drafts of this design defined an
 ADR-conflict reconciliation protocol against a separate `docs/adr/` layer.
@@ -927,32 +923,94 @@ involved in detecting staleness.
 ### 5.7 Integration with agent roles
 
 This design is deliberately agent-agnostic. The only role it defines is
-the Librarian (§5.8). Every other agent in any framework participates
-through the same tools:
+the Librarian (§5.8). No agent definition is hardcoded to know about the
+memory system. Instead, agents discover the memory subsystem dynamically
+through two mechanisms:
 
-- **Writing agents** — any agent that produces durable findings. Calls
-  `agent-memory write-note` with the chosen epistemic type, claim body, evidence,
-  and source-artifact. The tool handles everything else. As the last step
-  of its workflow, the agent invokes the Librarian skill to process
-  pending inbox notes.
-- **Reading agents** — any agent that needs context. Calls `agent-memory context`
-  once at session start to load Core + indices + staleness list + recent
-  log tail in a single tool call. Can use `agent-memory search` for
-  frontmatter/tag filtering to discover relevant notes, then read files
-  directly for full content.
-- **The Librarian** — invoked by user agents as a skill after writing
-  notes. Handles promotion (all types), deduplication, assumption
-  outdating, human confirmation for constraints/decisions, tagging,
-  pattern detection, synthesis, and optional maintenance.
+1. **Global instructions** — the `agent-memory instructions` output is
+   appended to the harness's global `AGENTS.md` (or equivalent). Every
+   agent and subagent inherits these instructions automatically. The
+   instructions explain what the vault is, how to read from it, and —
+   critically — **direct agents to write their findings to memory at the
+   end of every task** via the `memory-write` tool. This end-of-task
+   write directive is the primary write trigger for the entire system.
+2. **OpenCode plugin** — the `opencode-plugin-agent-memory` plugin (§5.9)
+   injects vault context into agent system prompts at every LLM call via
+   the `experimental.chat.system.transform` hook, and registers custom
+   tools (`memory-recall`, `memory-write`) that any agent can call without
+   needing `bash` permissions.
 
-**Mapping to a multi-agent setup.** A typical hierarchy might map roles as:
+The instructions handle *intent* (when and why to write). The plugin
+handles *mechanics* (context injection, tool registration, promotion
+triggers). The combination means any agent — regardless of role, team,
+or framework — can discover and use the memory system without being
+explicitly wired to it.
 
-- A Research role (potentially with a quorum of analysts) is the primary
-  source of `observation` notes. When a quorum is used, divergence maps
-  directly to `confidence`: unanimous → high, majority → medium, divergent
-  → low. Unresolved contradictions are written with `--contest`.
-- An Engineering or Implementation role writes `pattern` and `observation`
-  notes when it discovers non-obvious implementation facts.
+**Write trigger model.** The global instructions direct agents to write
+findings at the end of every task, following the pattern proven by
+Cline's Memory Bank and similar community systems. This works because:
+
+- End-of-task is a concrete, unambiguous stopping point with no competing
+  task pressure.
+- All writes are gated by the Librarian, so over-writing is cheap — low-
+  quality notes sit in `_inbox/` and get filtered during promotion.
+- The instruction includes a quality threshold: "write findings that
+  would be valuable to a different agent working on a different task in
+  this codebase." This filters routine observations while catching
+  durable knowledge.
+- Short-lived subagents (e.g. a Research Analyst running a single grep)
+  are unlikely to produce durable findings and will naturally skip the
+  write step. Lead agents synthesizing multiple subagent outputs are the
+  natural write point.
+
+**Three interaction patterns:**
+
+- **Reading** — any agent that needs context. The plugin injects a
+  compact vault summary (constraints, indices, staleness) into the system
+  prompt automatically. Agents can also call the `memory-recall` plugin
+  tool for on-demand search, or read vault files directly if they have
+  filesystem access.
+- **Writing** — any agent that produces durable findings. At the end of
+  its task, the agent invokes the `memory-write` plugin tool as directed
+  by the global instructions. All writes are routed through the
+  Librarian, which executes `agent-memory write-note` on the caller's
+  behalf, handles similarity conflicts, and returns the result. No
+  writing agent needs `bash` permissions.
+- **The Librarian** — the primary vault operations agent. Invoked in two
+  modes: mid-workflow when an agent calls the `memory-write` tool (the
+  plugin delegates to the Librarian), and at session end to process the
+  inbox (`librarian-workflow` skill). Handles writing, promotion,
+  deduplication, assumption outdating, human confirmation for
+  constraints/decisions, tagging, pattern detection, synthesis, and
+  optional maintenance.
+
+**Epistemic type guidance for agents.** Agents do not need to be
+pre-configured with knowledge of epistemic types. The global instructions
+and the writing protocol (`_meta/writing-protocol.md`) include a concise
+guide to the six types:
+
+| Type | When to use | Example |
+|---|---|---|
+| `observation` | You directly read or verified something in the codebase | "The `auth` middleware runs before `cors` in `server.go`" |
+| `pattern` | You noticed a recurring theme across 2+ observations | "All services in this codebase use the repository pattern" |
+| `constraint` | An external rule the system must respect (requires human confirmation) | "All API responses must include `X-Request-ID` headers" |
+| `decision` | A deliberate choice made by a human (requires human confirmation) | "We chose PostgreSQL over MongoDB for the user store" |
+| `assumption` | A belief you hold without verification (30-day TTL) | "The CI pipeline probably runs on Ubuntu 22.04" |
+| `synthesis` | A derived summary page (Librarian-only) | Entity page compounding multiple atomic notes |
+
+This table is included in the global instructions and the writing
+protocol. Agents learn what to write and how to classify it from the
+instructions they inherit, not from their own definitions.
+
+**Mapping to a multi-agent setup.** In practice, different agent roles
+tend to produce different epistemic types, but this is emergent, not
+enforced:
+
+- A Research role is the primary source of `observation` notes. When a
+  quorum is used, divergence maps directly to `confidence`: unanimous →
+  high, majority → medium, divergent → low.
+- An Engineering or Implementation role writes `pattern` and
+  `observation` notes when it discovers non-obvious implementation facts.
 - A Security or Review role writes `constraint` notes (which are gated
   for human confirmation by the tool, not by the role).
 - A Planner or Orchestrator role is primarily a reading agent: it loads
@@ -967,13 +1025,50 @@ source-artifact, and confidence.
 
 ### 5.8 The Librarian agent
 
-The Librarian is the one role this design defines. It is invoked by user
-agents as a skill at the end of their workflow, after writing one or more
-notes to `_inbox/`. The Librarian processes all pending inbox notes in a
-single pass: validating, classifying, promoting, deduplicating, and
-optionally running maintenance.
+The Librarian is the one role this design defines. It is the **primary
+agent for vault CLI operations** — the `agent-memory` skills are globally
+defined and technically available to any agent, but in practice all vault
+writes and lifecycle operations are routed through the Librarian. No other
+agent needs `bash` permissions for memory operations under normal use.
 
-**Core responsibilities (every invocation):**
+The Librarian is invoked in two distinct modes via separate skills:
+
+- **`memory-write` skill** — invoked mid-workflow by any agent that has a
+  finding to record. The calling agent passes the epistemic type, claim
+  body, evidence, and source-artifact; the Librarian executes
+  `agent-memory write-note` and returns the result. The calling agent needs
+  no `bash` permissions.
+- **`librarian-workflow` skill** — invoked at session end (or by the
+  `session.idle` OpenCode plugin) to process all pending inbox notes in a
+  single pass: validating, classifying, promoting, deduplicating, and
+  optionally running maintenance.
+
+Each invocation is stateless and isolated. The skill supplied at invocation
+time determines which responsibility is active; the agent definition is
+shared.
+
+**Write responsibilities (`memory-write` skill):**
+
+1. **Receive** the note request from the calling agent: type, title, claim
+   body, evidence, source-artifact, confidence, scope, project, domain.
+2. **Execute** `agent-memory write-note` with the supplied parameters.
+3. **Handle similarity conflicts.** If `agent-memory write-note` refuses due to
+   a high-similarity candidate, the Librarian surfaces the candidate note
+   to the calling agent with a summary of the overlap. The calling agent
+   then decides:
+   - **Drop** — the notes are the same claim; discard the new note.
+   - **Update** — the new note improves or supersedes the existing one;
+     reissue with `--update=<slug>` so the Librarian can write the
+     replacement and deprecate the old note.
+   - **Reword** — the notes are genuinely distinct but titles are too
+     similar; the calling agent revises the title and reissues.
+4. **Return** the result (slug, path, any remaining warnings) to the
+   calling agent.
+
+The Librarian does not judge whether a finding is worth recording — that
+judgment belongs to the calling agent. The Librarian owns the mechanics.
+
+**Promotion responsibilities (`librarian-workflow` skill, every invocation):**
 
 1. **Validate** — check each inbox note for completeness, uniqueness, and
    lint validity. Notes that fail are flagged with specific errors.
@@ -987,7 +1082,7 @@ optionally running maintenance.
    verified or disproved by newly promoted notes. Remove outdated
    assumptions (archive mechanism deferred to a future increment).
 
-**Maintenance responsibilities (Librarian decides when):**
+**Maintenance responsibilities (Librarian decides when, during promotion pass):**
 
 The Librarian has instructions to assess whether maintenance is needed
 based on vault state. It may choose to:
@@ -1002,16 +1097,30 @@ based on vault state. It may choose to:
 
 **Trigger model:**
 
-The initial implementation uses skill invocation: the user agent calls
-the Librarian skill as the last step of its workflow. The
-`agent-memory instructions` output tells agents about this flow.
+Two triggers, one agent:
 
-**Future: decoupled service model.** A future iteration may run the
-Librarian as a background service triggered by filesystem watch,
-session-end hook, or cron. This avoids blocking the user agent's
-workflow when the vault is large. The Librarian's logic is identical
-in both models; only the trigger mechanism changes. Statically
-detectable triggers for the service model:
+1. **Mid-workflow write:** any agent calls the `memory-write` plugin tool
+   (or invokes the `memory-write` skill directly if it has skill access).
+   The plugin tool delegates to the Librarian, which executes
+   `agent-memory write-note` on the caller's behalf.
+2. **Session-idle promotion:** the `opencode-plugin-agent-memory` plugin
+   (§5.9) listens for `session.idle` events. When a session becomes idle
+   and `_inbox/` is non-empty, the plugin invokes the Librarian via the
+   `librarian-workflow` skill to process pending notes. This is
+   model-independent — promotion happens automatically without any agent
+   needing to remember to call it.
+
+The plugin also handles context injection (§5.9) and tool registration,
+making the memory system discoverable by all agents without per-agent
+configuration.
+
+**Future: background service model.** The plugin's `session.idle`
+listener already makes promotion model-independent. A further iteration
+may replace the plugin with a persistent background service (filesystem
+watch or cron) that runs the promotion pass without requiring an active
+OpenCode session. The Librarian's logic is identical in both models; only
+the trigger mechanism changes. Statically detectable triggers for the
+service model:
 - New files in `_inbox/` (filesystem watch)
 - `_contested/` directory non-empty
 - `_meta/log.md` exceeds configured line-count threshold
@@ -1023,9 +1132,11 @@ Librarian instance adds latency without changing the outcome. Upstream
 quorum (where used) has already established the underlying claim.
 
 **Placement:** The Librarian runs as a **subagent** — a dedicated agent
-instance invoked by the user agent at the end of its workflow. Running as a
-subagent (rather than inline skill instructions) isolates memory-handling
-context from the user agent's context window, preventing context poisoning.
+instance invoked either by a calling agent (write path) or by the
+session-end plugin (promotion path). Running as a subagent isolates
+memory-handling context from the calling agent's context window,
+preventing context poisoning.
+
 The vault carries deployment templates at `_meta/templates/librarian-agent.md`
 and `_meta/templates/librarian-skill.md` that are seeded by `agent-memory init`.
 These templates target OpenCode as the primary harness; the architecture
@@ -1039,11 +1150,26 @@ supports future expansion to other agent frameworks.
   `git`/`grep`/`find` on vault directory = allow; `*` = deny
 - `task`: deny (leaf subagent; does not spawn sub-agents)
 
+Note: both skills share this permission set. The `memory-write` skill
+only needs `agent-memory write-note` and `agent-memory lint-note`; the
+`librarian-workflow` skill uses the full range of subcommands. Future
+skill-level permission scoping could restrict each invocation path to
+only the commands it needs.
+
 **Tools the Librarian invokes:**
 
-The Librarian uses the same agent-facing tools as everyone else
-(`agent-memory context`, `agent-memory search`, `agent-memory write-note`), plus tools it has
-exclusive access to:
+The `agent-memory` skills are globally defined and available to any agent,
+but the Librarian is their primary consumer. Read-path commands
+(`agent-memory context`, `agent-memory search`) are used by any agent that
+needs vault context. Write-path and lifecycle commands are used primarily
+by the Librarian:
+
+- `agent-memory write-note` — writes a new note to `_inbox/`. Used by the
+  Librarian on behalf of calling agents (via the `memory-write` skill).
+- `agent-memory lint-note` — validates a note file. Used as a gate before
+  writing and before promotion.
+- `agent-memory promote` — moves a validated note from `_inbox/` to `notes/`
+  with `status: verified`. Core operation of the `librarian-workflow` skill.
 
 - `agent-memory tag` — tag taxonomy management. Used to assign tags to untagged
   notes (`--assign --slug=<x> --tags=<a,b>`), accept new tags into the
@@ -1061,6 +1187,109 @@ exclusive access to:
 All other operations the Librarian might appear to do (writing the log,
 updating an index, computing TTL, scanning staleness) are tool
 side-effects, not Librarian work.
+
+---
+
+### 5.9 OpenCode plugin (`opencode-plugin-agent-memory`)
+
+The plugin is the primary integration mechanism for OpenCode-based agent
+workflows. It makes the memory system discoverable by all agents without
+requiring any agent definition to be modified. The plugin is an npm
+package installed in the OpenCode config directory and registered in
+`opencode.json`.
+
+**What the plugin does:**
+
+1. **Context injection** — uses the `experimental.chat.system.transform`
+   hook to append a compact vault summary to every agent's system prompt.
+   The injected content includes:
+   - A one-paragraph explanation of the memory system and how to use it
+   - The constraints summary (`_meta/constraints-summary.md`)
+   - A list of stale notes (past `review-by` date)
+   - The epistemic type guide (what types exist and when to use each)
+   - Instructions for using the `memory-recall` and `memory-write` tools
+
+   The injection runs on every LLM call, so agents always have current
+   vault context. Content is kept under 600 tokens to minimise context
+   window impact.
+
+2. **Tool registration** — registers two tools that any agent can call:
+
+   - **`memory-recall`** — searches the vault for relevant notes. Takes a
+     query string and optional filters (project, domain, type). Runs
+     `agent-memory search` internally and returns matching note metadata.
+     Agents can then read specific note files for full content.
+   - **`memory-write`** — writes a note to the vault via the Librarian.
+     Takes title, body, type, confidence, domain, project, scope, and
+     source-artifact. Runs `agent-memory write-note` internally. Returns
+     the written note's slug, path, and any warnings.
+
+   These tools are available to every agent in every session. No agent
+   definition needs to reference them — the LLM discovers them through
+   the standard tool listing.
+
+3. **Session-idle promotion** — listens for `session.idle` events via the
+   `event` hook. When a session becomes idle and `_inbox/` contains
+   unprocessed notes, the plugin triggers the Librarian's promotion pass.
+   This is debounced: the plugin waits for a configurable idle period
+   (default: 30 seconds) before triggering, to avoid running the
+   Librarian after every assistant turn in a multi-turn conversation.
+
+4. **Environment wiring** — uses the `shell.env` hook to set
+   `AGENT_MEMORY_VAULT` in all shell invocations, ensuring that any
+   `agent-memory` CLI call from any agent finds the correct vault without
+   explicit path arguments.
+
+**Plugin configuration:**
+
+```json
+{
+  "plugin": [
+    ["opencode-plugin-agent-memory", {
+      "vault": ".agent-memory",
+      "inject_context": true,
+      "auto_promote": true,
+      "idle_debounce_ms": 30000
+    }]
+  ]
+}
+```
+
+All options have sensible defaults. The `vault` path is resolved relative
+to the project directory; if omitted, the plugin uses the standard vault
+discovery mechanism (env var → walk up → global fallback).
+
+**Why a plugin, not just instructions:**
+
+Instructions in `AGENTS.md` tell agents *what* the memory system is and
+*how* to use it. But instructions rely on the model following them
+reliably, and they cannot register tools or inject dynamic content. The
+plugin provides three things instructions cannot:
+
+1. **Dynamic context** — the constraints summary and staleness list change
+   between sessions. Instructions are static; the plugin injects current
+   state.
+2. **Tool registration** — agents can call `memory-recall` and
+   `memory-write` as first-class tools without needing `bash` permissions
+   or knowing the CLI syntax.
+3. **Automatic promotion** — the session-idle trigger runs without any
+   agent needing to remember to invoke the Librarian.
+
+Instructions and the plugin are complementary. The instructions provide
+the conceptual framework (what epistemic types are, why the vault exists,
+how to think about what to write). The plugin provides the mechanical
+integration (tools, context, triggers).
+
+**Harness portability:** The plugin targets OpenCode. For other
+frameworks (Claude Code, Cursor, etc.), the same functionality is
+achieved through framework-specific mechanisms:
+
+| Framework | Context injection | Tool registration | Session-end trigger |
+|---|---|---|---|
+| **OpenCode** | Plugin: `system.transform` hook | Plugin: `tool` hook | Plugin: `event` hook (`session.idle`) |
+| **Claude Code** | `pre-tool-use` hook in `settings.json` | MCP server (when supported) | `session-end` hook |
+| **Cursor / Windsurf** | `.cursorrules` with `agent-memory context` instruction | Not available | Not available |
+| **Other** | Agent instruction baseline | `bash` tool calls | Manual Librarian invocation |
 
 ---
 
@@ -1094,12 +1323,14 @@ for routine observations is over-engineering.
 
 The order is dictated by the static-tooling principle (§5.0): tools land
 before the Librarian agent, because most of what earlier drafts assigned
-to the Librarian is now a tool side-effect.
+to the Librarian is now a tool side-effect. Agent integration is achieved
+through dynamic discovery (§5.7), not per-agent wiring.
 
 1. **Write `_meta/writing-protocol.md` first** — the constitution of the
    memory system. Reflects the static-tooling factoring: it tells agents
    what they are responsible for (claim, evidence, type, flag) and points
-   at the tools that handle everything else.
+   at the tools that handle everything else. Includes the epistemic type
+   guide so agents can learn what to write from the protocol itself.
 
 2. **Build the Go tooling core** — `agent-memory init`, `agent-memory lint-note`,
    `agent-memory lint-vault`. Init scaffolds the vault (`_meta/` templates, `_meta/log.md`,
@@ -1111,38 +1342,34 @@ to the Librarian is now a tool side-effect.
 
 4. **Build the maintenance commands** — `agent-memory promote`, `agent-memory reindex`.
    With these in place, the inbox lifecycle and index maintenance run
-   without any LLM involvement, on a `session-end` hook or cron.
+   without any LLM involvement.
 
 5. **Define the Librarian agent** — thin escalation handler (§5.8). The
    definition is short because the responsibilities are short. Standalone
    global agent; not added to any team manifest.
 
-6. **Build `agent-memory curate`** — Librarian-only; structures high-stakes
-   inbox items (`constraint`, `decision`) into a promote/reject
-   recommendation for the human.
+6. **Build the OpenCode plugin** — `opencode-plugin-agent-memory` (§5.9).
+   This is the primary agent integration mechanism. The plugin injects
+   vault context into all agent system prompts, registers `memory-recall`
+   and `memory-write` tools, triggers promotion on session idle, and sets
+   the vault path in the shell environment. No agent definition needs to
+   be modified — all agents discover the memory system dynamically.
 
 7. **Seed `_meta/constraints-summary.md` and first index notes** — the
    first run of `agent-memory reindex` produces empty indices; seed them with
    any known constraints from existing project records. The Core and
    Index tiers become useful immediately.
 
-8. **Wire reading agents to `agent-memory context`** — add a single
-   session-start tool call (or framework-equivalent hook) to every agent
-   definition that needs context. No further per-agent integration is
-   required for reads.
+8. **Build `agent-memory curate`** — Librarian-only; structures high-stakes
+   inbox items (`constraint`, `decision`) into a promote/reject
+   recommendation for the human.
 
-9. **Wire writing agents to `agent-memory write-note`** — enable the tool for any
-   agent that produces durable findings. The tool's refusal behaviour
-   (`--new-claim`/`--update`/`--contest` required on similarity hit)
-   teaches the agent the discipline; no per-agent prompt engineering
-   needed.
+9. **Build `agent-memory synthesize` and `agent-memory tag`** —
+   deferrable until the vault has accumulated content. `agent-memory synthesize`
+   produces deterministic scaffolds; the Librarian fills in prose only when
+   invoked. `agent-memory tag` enables the Librarian's tagging maintenance pass.
 
-10. **Build `agent-memory synthesize` and `agent-memory tag`** —
-    deferrable until the vault has accumulated content. `agent-memory synthesize`
-    produces deterministic scaffolds; the Librarian fills in prose only when
-    invoked. `agent-memory tag` enables the Librarian's tagging maintenance pass.
-
-11. **Backfill (optional)** — run reading agents over existing project
+10. **Backfill (optional)** — run reading agents over existing project
     artifacts to seed the vault with current knowledge. Use `agent-memory write-note`
     like any other agent.
 
@@ -1181,12 +1408,18 @@ command.
 | `agent-memory lint` | Human | Human-readable wrapper: runs `agent-memory lint-note` on all files + `agent-memory lint-vault`; pretty-prints findings |
 
 The agent-facing trio (`context`, `write-note`, `search`) is the entire
-interface a normal agent needs. Maintenance subcommands are invoked
-outside sessions; the Librarian subcommands are invoked only on tool
-escalations.
+CLI interface a normal agent needs. However, the primary agent integration
+for OpenCode is the `opencode-plugin-agent-memory` plugin (§5.9), which
+wraps these CLI commands in plugin-registered tools (`memory-recall`,
+`memory-write`) and handles context injection and promotion triggers
+automatically. Agents that use the plugin never need to call CLI commands
+directly.
 
-**Implemented so far:** `init`, `instructions`, `write-note`. Remaining
-subcommands are planned for future increments.
+Maintenance subcommands are invoked outside sessions; the Librarian
+subcommands are invoked only on tool escalations.
+
+**Implemented so far:** `init`, `instructions`, `write-note`, `lint-note`,
+`promote`. Remaining subcommands are planned for future increments.
 
 ### 9.2 Repository structure
 
@@ -1494,10 +1727,11 @@ path serves as the catch-all for invocations outside any project.
 
 | When | What runs | Who triggers it |
 |---|---|---|
-| Session start | `agent-memory context` | Agent (one tool call) |
-| During work | `agent-memory search`, `agent-memory write-note` | Agent, on demand |
-| Session end (current model) | Librarian subagent invocation: validate, promote, deduplicate inbox notes | User agent (last step of workflow) |
-| Session end (future: decoupled model) | `agent-memory promote`, `agent-memory reindex` | Host hook / cron / human — **no agent involvement** |
+| Every LLM call | Vault context injected into system prompt | `opencode-plugin-agent-memory` (`system.transform` hook) |
+| During work | `memory-recall` tool, `memory-write` tool | Agent, via plugin-registered tools |
+| During work (alternative) | `agent-memory search`, `agent-memory write-note` | Agent, via bash (if plugin not available) |
+| Session idle (debounced) | Librarian promotion pass: validate, promote, deduplicate inbox notes | `opencode-plugin-agent-memory` (`session.idle` event, debounced) |
+| Session idle (future: background service) | Same Librarian logic, triggered by filesystem watch or cron instead of plugin | Host service / cron — **no agent involvement** |
 | Log threshold crossed | Librarian maintenance pass: tag untagged notes, detect patterns, review synthesis gaps | Host/cron (log line-count check) |
 | Daily / weekly | `agent-memory lint-vault` | Cron or human |
 | On escalation | `agent-memory curate`, Librarian invocation | `requires-human-review: true` in `_inbox/`, `_contested/` non-empty, or human |
@@ -1523,13 +1757,14 @@ All questions from the initial design phase are closed.
 | Index maintenance | `agent-memory reindex` regenerates from frontmatter scan; not Librarian work |
 | Promotion | Librarian-driven. User agent invokes Librarian skill after writing notes. Librarian checks completeness, uniqueness, lint, then promotes. No TTL-based auto-promote; `review-by` is a staleness indicator only. |
 | Librarian role | Validation, classification, promotion (all types), deduplication, assumption outdating, human confirmation for constraints/decisions, tagging, pattern detection, synthesis, optional maintenance. |
-| Librarian triggers | User agent invokes Librarian subagent as last step of workflow. Future: decoupled background service (filesystem watch, session-end hook, cron). |
+| Librarian triggers | Plugin `session.idle` event (debounced) triggers promotion pass automatically. Mid-workflow writes via `memory-write` plugin tool or skill. Future: decoupled background service (filesystem watch, cron). |
 | Correction/amendment | Replacement only — no in-place edits. New note replaces old; Librarian deprecates old note with forward link. Full audit trail preserved. |
 | Pattern detection | Librarian task using LLM judgment on its maintenance pass; no deterministic binary |
 | Synthesis triggers | Librarian creates proactively during maintenance or on agent request; `lint-vault --dense` surfaces areas needing synthesis |
 | Librarian placement | Subagent invoked by user agents; isolates memory-handling from user context. Vault carries deployment templates at `_meta/templates/`. Targets OpenCode first; architecture supports future expansion. |
-| Agent-framework coupling | Design is framework-agnostic; only the Librarian role is defined here |
-| Harness hooks | Agent-instruction baseline only; hooks documented as optional enhancements |
+| Agent-framework coupling | Design is framework-agnostic; only the Librarian role is defined here. OpenCode integration via `opencode-plugin-agent-memory` plugin (§5.9). |
+| Agent discovery model | Dynamic discovery via global instructions + plugin. No agent definition is hardcoded to know about memory. Agents learn about the system from injected context and available tools. |
+| Harness hooks | OpenCode plugin provides `system.transform` (context injection), `tool` (memory-recall, memory-write), `event` (session-idle promotion), and `shell.env` (vault path). Other frameworks use instruction baseline. |
 | Tooling | Go module `github.com/michaelin/agent-memory`; single binary with subcommands ([ADR-0001](adr/adr-0001-single-binary-with-subcommands.md)); agent-facing subcommands (`context`, `write-note`, `search`) + maintenance (`promote`, `reindex`, `tag`, `synthesize`, `curate`) + lint subcommands |
 | Git in vault | No git; vault is plain files; durability via `agent-memory backup` |
 | `git init` during init | Dropped; `init` is a plain file/folder scaffold from embedded templates |
