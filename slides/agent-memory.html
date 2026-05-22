@@ -1,0 +1,941 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Agent Memory — Persistent Knowledge for Coding Agents</title>
+
+  <!-- Reveal.js -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.2.1/dist/reset.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.2.1/dist/reveal.css" />
+  <link id="theme-dark"  rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.2.1/dist/theme/black.css" />
+  <link id="theme-light" rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.2.1/dist/theme/white.css" disabled />
+
+  <!-- Font Awesome -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css" />
+
+  <style>
+    /* ── Root variables ── */
+    :root {
+      --eficode-yellow: #FFD100;
+      --eficode-dark: #1A1A1A;
+      --eficode-orange: #E5A000;
+      --eficode-gray: #dad9d9;
+      --accent: #FFD100;
+      --accent-dim: rgba(255, 209, 0, 0.12);
+      --accent-mid: rgba(255, 209, 0, 0.30);
+      --accent-bright: rgba(255, 209, 0, 0.55);
+      --text-muted: rgba(255, 255, 255, 0.75);
+    }
+
+    /* ── Theme toggle ── */
+    .theme-toggle {
+      position: fixed; top: 15px; right: 15px; z-index: 100;
+      background: rgba(128,128,128,0.3); border: 1px solid rgba(128,128,128,0.5);
+      color: inherit; border-radius: 50%; width: 40px; height: 40px;
+      cursor: pointer; font-size: 1.1em; display: flex;
+      align-items: center; justify-content: center;
+      transition: all 0.3s ease; backdrop-filter: blur(4px);
+    }
+    .theme-toggle:hover { background: rgba(128,128,128,0.5); transform: scale(1.1); }
+
+    /* ── Light mode overrides ── */
+    html.light-mode {
+      --accent: #1A1A1A; --accent-dim: rgba(26,26,26,0.08);
+      --accent-mid: rgba(26,26,26,0.20); --accent-bright: rgba(26,26,26,0.40);
+      --text-muted: rgba(0,0,0,0.60);
+    }
+    html.light-mode .card { background: linear-gradient(135deg, var(--accent-dim), rgba(0,0,0,0.02)); border-color: var(--accent-mid); }
+    html.light-mode .card p, html.light-mode .demo-context { color: var(--text-muted); }
+    html.light-mode .agenda-list li { background: linear-gradient(135deg, var(--accent-dim), rgba(0,0,0,0.02)); border-left-color: var(--eficode-yellow); }
+    html.light-mode .code-block { background: rgba(240,240,240,0.9); border-color: var(--accent-mid); color: #24292e; }
+    html.light-mode .code-block .comment { color: #6a737d; }
+    html.light-mode .code-block .keyword { color: #d73a49; }
+    html.light-mode .code-block .string { color: #032f62; }
+    html.light-mode .code-block .property { color: #005cc5; }
+    html.light-mode .file-tree { background: rgba(240,240,240,0.8); border-color: var(--accent-mid); }
+    html.light-mode .file-tree .folder { color: var(--eficode-orange); }
+    html.light-mode .file-tree .highlight { color: #22863a; }
+    html.light-mode .badge { background: var(--eficode-yellow); color: #1a1a1a; }
+    html.light-mode .compare-table th { background: linear-gradient(135deg, var(--eficode-yellow), rgba(0,0,0,0.05)); border-color: var(--accent-bright); color: var(--eficode-dark); }
+    html.light-mode .compare-table td { border-color: rgba(0,0,0,0.12); background: rgba(0,0,0,0.02); }
+    html.light-mode .compare-table tr:hover td { background: var(--accent-dim); }
+    html.light-mode .highlight-box { background: linear-gradient(135deg, rgba(255,209,0,0.15), rgba(0,0,0,0.02)); border-color: var(--eficode-yellow); }
+    html.light-mode .workflow-step { background: linear-gradient(135deg, var(--accent-dim), rgba(0,0,0,0.02)); border-color: var(--accent-mid); }
+    html.light-mode .workflow-arrow { color: var(--eficode-orange); }
+    html.light-mode .qa-icon { color: var(--eficode-yellow); }
+
+    .reveal h1, .reveal h2, .reveal h3 { text-transform: none; }
+
+    /* ── Card grids ── */
+    .grid-2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px; padding: 10px; text-align: left; }
+    .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; padding: 10px; text-align: left; }
+    .card { background: linear-gradient(135deg, var(--accent-dim), rgba(255,255,255,0.05)); border-radius: 8px; padding: 20px; border: 2px solid var(--accent-mid); transition: all 0.3s ease; }
+    .card:hover { background: linear-gradient(135deg, rgba(74,158,255,0.25), rgba(255,255,255,0.1)); border-color: var(--accent-bright); transform: translateY(-5px); box-shadow: 0 10px 30px rgba(74,158,255,0.3); }
+    .card i { font-size: 1.6em; display: block; color: var(--accent); margin-bottom: 8px; }
+    .card h4 { margin: 8px 0 6px 0; font-size: 0.75em; }
+    .card p { font-size: 0.55em; margin: 0; color: var(--text-muted); line-height: 1.5; }
+    .card-center { text-align: center; }
+
+    /* ── Agenda ── */
+    .agenda-list { list-style: none; padding: 0; text-align: left; max-width: 900px; margin: 0 auto; }
+    .agenda-list li { padding: 12px 20px; margin: 8px 0; background: linear-gradient(135deg, var(--accent-dim), rgba(255,255,255,0.03)); border-left: 4px solid var(--accent); border-radius: 4px; font-size: 0.85em; display: flex; align-items: center; gap: 15px; }
+    .agenda-list li i { color: var(--accent); width: 24px; text-align: center; }
+    .agenda-list li .time { margin-left: auto; font-size: 0.75em; color: var(--text-muted); opacity: 0.7; }
+
+    /* ── Code blocks ── */
+    .code-block { background: rgba(0,0,0,0.6); border: 1px solid var(--accent-mid); border-radius: 8px; padding: 18px 22px; text-align: left; font-family: 'Fira Code', 'Cascadia Code', monospace; font-size: 0.48em; line-height: 1.6; overflow-x: auto; margin: 15px 0; white-space: pre; word-wrap: normal; }
+    .code-block .comment { color: #6a9955; }
+    .code-block .keyword { color: #569cd6; }
+    .code-block .string { color: #ce9178; }
+    .code-block .property { color: #9cdcfe; }
+
+    /* ── File tree ── */
+    .file-tree { text-align: left; font-family: 'Fira Code', 'Cascadia Code', monospace; font-size: 0.55em; line-height: 1.8; background: rgba(0,0,0,0.5); border: 1px solid var(--accent-mid); border-radius: 8px; padding: 18px 25px; display: inline-block; }
+    .file-tree .folder { color: var(--accent); }
+    .file-tree .file { color: #e0e0e0; }
+    .file-tree .highlight { color: #4caf50; font-weight: bold; }
+
+    /* ── Comparison table ── */
+    .compare-table { font-size: 0.55em; width: 90%; margin: 15px auto; border-collapse: collapse; }
+    .compare-table th { background: linear-gradient(135deg, var(--accent-mid), rgba(255,255,255,0.1)); padding: 12px 15px; border: 1px solid var(--accent-bright); text-align: left; text-transform: uppercase; letter-spacing: 1px; }
+    .compare-table td { padding: 10px 15px; border: 1px solid rgba(255,255,255,0.15); background: rgba(255,255,255,0.03); }
+    .compare-table tr:hover td { background: var(--accent-dim); }
+
+    /* ── Workflow arrows ── */
+    .workflow { display: flex; align-items: center; justify-content: center; gap: 10px; flex-wrap: wrap; margin: 25px 0; }
+    .workflow-step { background: linear-gradient(135deg, var(--accent-dim), rgba(255,255,255,0.05)); border: 2px solid var(--accent-mid); border-radius: 8px; padding: 15px 20px; text-align: center; min-width: 120px; }
+    .workflow-step i { display: block; font-size: 1.3em; color: var(--accent); margin-bottom: 6px; }
+    .workflow-step span { font-size: 0.65em; }
+    .workflow-arrow { font-size: 1.5em; color: var(--accent); }
+
+    /* ── Badge ── */
+    .badge { display: inline-block; background: var(--accent-mid); color: #fff; padding: 4px 14px; border-radius: 20px; font-size: 0.55em; margin: 3px; }
+
+    /* ── QA slide ── */
+    .qa-icon { font-size: 4em; color: var(--accent); margin-bottom: 20px; }
+
+    /* ── Highlight box ── */
+    .highlight-box { background: linear-gradient(135deg, rgba(255,209,0,0.18), rgba(255,255,255,0.04)); border: 2px solid var(--accent); border-radius: 8px; padding: 20px 25px; margin: 20px auto; max-width: 800px; text-align: center; }
+    .highlight-box p { font-size: 0.8em; margin: 0; }
+
+    /* ── Title slide ── */
+    .title-slide-layout { background-color: var(--eficode-yellow); display: grid; grid-template-columns: 1fr 1fr; height: 100%; width: 100%; position: relative; }
+    .title-slide-left { display: flex; flex-direction: column; justify-content: flex-end; padding: 0 30px 50px 50px; position: relative; }
+    .eficode-logo { position: sticky; top: 20px; left: 50px; height: 65px; width: fit-content; }
+    .title-heading { font-size: 1.5em !important; font-weight: 900 !important; text-transform: uppercase !important; color: var(--eficode-dark) !important; line-height: 1.05 !important; letter-spacing: -0.01em !important; margin: 0 0 30px 0 !important; text-align: left !important; }
+    .title-series { font-size: 0.65em !important; font-weight: 700 !important; color: var(--eficode-dark) !important; margin: 0 0 6px 0 !important; text-align: left !important; }
+    .title-url { font-size: 0.55em !important; font-weight: 400 !important; color: var(--eficode-dark) !important; margin: 0 !important; text-align: left !important; }
+    .title-slide-right { background: var(--eficode-gray); display: flex; clip-path: polygon(27% 0, 100% 0, 100% 100%, 43% 100%, 0 65%); align-items: center; justify-content: center; overflow: hidden; }
+    .title-illustration { max-height: 90%; max-width: 100%; object-fit: contain; }
+
+    /* ── Closing slide ── */
+    .closing-slide-layout { display: grid; grid-template-columns: 56% 44%; height: 100%; width: 100%; position: absolute; inset: 0; }
+    .closing-slide-left { display: flex; flex-direction: column; justify-content: space-between; padding: 40px 30px 40px 50px; text-align: left; position: relative; z-index: 1; }
+    .closing-thank-you { font-size: 1.6em !important; font-weight: 900 !important; text-align: left !important; margin: 0 !important; text-transform: none !important; }
+    .closing-slide-left .contact-list { list-style: none; padding: 50px 0 50px 0; margin: 0 0 0 35px; }
+    .closing-slide-left .contact-list li { display: flex; align-items: center; gap: 14px; font-size: 0.65em; font-weight: 600; margin-bottom: 16px; }
+    .closing-slide-left .contact-list li i { width: 42px; height: 42px; min-width: 42px; background: rgba(0,0,0,0.10); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 1.1em; }
+    .closing-cta { background: var(--eficode-yellow); color: var(--eficode-dark); padding: 5px 15px; border-radius: 4px; font-size: 0.4em; font-weight: 300; display: inline-block; align-self: flex-start; }
+    .closing-cta strong { font-weight: 800; }
+    .closing-slide-right { position: relative; overflow: hidden; background: var(--eficode-yellow); clip-path: polygon(27% 0, 100% 0, 100% 100%, 43% 100%, 0 65%); display: flex; align-items: center; justify-content: flex-end; }
+    .closing-slide-right .title-illustration { max-height: 82%; max-width: 90%; object-fit: contain; position: relative; z-index: 1; }
+    .closing-eficode-logo { position: absolute; top: 16px; right: 16px; height: 52px; width: auto; z-index: 2; }
+  </style>
+</head>
+<body>
+<div class="reveal">
+  <div class="slides">
+
+    <!-- PATTERN: Eficode Title Slide -->
+    <section>
+      <div class="title-slide-layout">
+        <div class="title-slide-left">
+          <img src="assets/eficode-logo.png" alt="Eficode" class="eficode-logo" />
+          <h1 class="title-heading">Agent Memory</h1>
+          <p class="title-series">Persistent Knowledge for Coding Agents</p>
+          <p class="title-url">github.com/michaelin/agent-memory</p>
+        </div>
+        <div class="title-slide-right">
+          <img src="assets/title-illustration.png" alt="" class="title-illustration" />
+        </div>
+      </div>
+      <aside class="notes">
+        Welcome. This talk is about a problem every team using coding agents runs into eventually — agents that forget everything between sessions — and a principled system for fixing it.
+      </aside>
+    </section>
+
+    <!-- PATTERN: Agenda -->
+    <section>
+      <h2><i class="fas fa-list-ul" style="color: var(--accent)"></i> Agenda</h2>
+      <ul class="agenda-list">
+        <li><i class="fas fa-exclamation-triangle"></i> The Problem <span class="time">~5 min</span></li>
+        <li><i class="fas fa-flask"></i> The Memory Experiment <span class="time">~8 min</span></li>
+        <li><i class="fas fa-lightbulb"></i> Theoretical Foundations <span class="time">~8 min</span></li>
+        <li><i class="fas fa-sitemap"></i> System Design <span class="time">~12 min</span></li>
+        <li><i class="fas fa-shield-halved"></i> Knowledge Hygiene <span class="time">~8 min</span></li>
+        <li><i class="fas fa-terminal"></i> The Tooling <span class="time">~5 min</span></li>
+        <li><i class="fas fa-comments"></i> Q &amp; A <span class="time">~10 min</span></li>
+      </ul>
+      <aside class="notes">We'll cover the problem, the memory experiment that shaped the design, the theory behind it, the system itself, and the Go tooling that makes it deterministic.</aside>
+    </section>
+
+
+    <!-- ═══════════════════════════════════════════ -->
+    <!-- TOPIC: The Problem                         -->
+    <!-- ═══════════════════════════════════════════ -->
+    <section>
+
+      <!-- Sub-slide 1: Intro -->
+      <section>
+        <h2><i class="fas fa-exclamation-triangle" style="color: var(--accent)"></i> The Problem</h2>
+        <p style="font-size: 0.75em">Coding agents have no persistent memory and a limited, ephemeral context window.</p>
+        <p><small>Press ↓ for details</small></p>
+        <div class="highlight-box">
+          <p>
+            What an agent learns in one session <strong>dies when the session ends</strong>.
+            Hard-won knowledge — patterns, constraints, decisions — evaporates.
+          </p>
+        </div>
+        <aside class="notes">Two problems compound each other: agents forget everything between sessions, and within a session the context window is both limited and unreliable as it fills up.</aside>
+      </section>
+
+      <!-- Sub-slide 2: Two failure modes -->
+      <section>
+        <h3>Two Distinct Failure Modes</h3>
+        <div class="grid-2" style="margin-top: 20px">
+          <div class="card card-center">
+            <i class="fas fa-brain"></i>
+            <h4>Agent Amnesia</h4>
+            <p>
+              Knowledge is bounded by the session it was discovered in.
+              Cross-project patterns, informal decisions, and hard-won observations are never recorded.
+            </p>
+          </div>
+          <div class="card card-center" style="border-color: var(--accent)">
+            <i class="fas fa-spinner"></i>
+            <h4>Context Rot</h4>
+            <p>
+              As the context window fills, LLMs become progressively less reliable at recalling earlier information.
+              Loading everything makes things worse, not better.
+            </p>
+          </div>
+        </div>
+        <aside class="notes">Amnesia is about persistence across sessions. Context rot is about reliability within a session. Both need to be solved — and they require different solutions.</aside>
+      </section>
+
+      <!-- Sub-slide 3: Combating Agent Amnesia -->
+      <section>
+        <h3><i class="fas fa-brain" style="color: var(--accent)"></i> Solving Agent Amnesia</h3>
+        <div class="grid-3" style="margin-top: 20px">
+          <div class="card card-center">
+            <i class="fas fa-server"></i>
+            <h4>Out-of-repo Obsidian vault</h4>
+            <p>Memory lives outside any single project. It survives repo deletion and spans codebases.</p>
+          </div>
+          <div class="card card-center">
+            <i class="fas fa-atom"></i>
+            <h4>Atomic notes</h4>
+            <p>One claim per note. Each fact can be individually verified, updated, or deprecated without touching anything else.</p>
+          </div>
+          <div class="card card-center">
+            <i class="fas fa-pen"></i>
+            <h4>Write at task end</h4>
+            <p>Agents are instructed to record durable findings at the end of every task — before the session closes.</p>
+          </div>
+        </div>
+        <aside class="notes">The out-of-repo vault is the structural answer. Atomic notes keep it maintainable as it grows. The end-of-task write trigger is the behavioural answer — borrowed from Cline's Memory Bank pattern.</aside>
+      </section>
+
+      <!-- Sub-slide 4: Combating Context Rot -->
+      <section>
+        <h3><i class="fas fa-spinner" style="color: var(--accent)"></i> Solving Context Rot</h3>
+        <div class="grid-3" style="margin-top: 20px">
+          <div class="card card-center">
+            <i class="fas fa-layer-group"></i>
+            <h4>Three memory tiers</h4>
+            <p>Core is always loaded. Index is loaded at session start. Archival is fetched on demand only when a task requires it.</p>
+          </div>
+          <div class="card card-center">
+            <i class="fas fa-bullseye"></i>
+            <h4>Hard token budgets</h4>
+            <p>Core is capped at 600 tokens. Each index at 300. The majority of the context window stays free for actual work.</p>
+          </div>
+          <div class="card card-center">
+            <i class="fas fa-magnifying-glass"></i>
+            <h4>Search before load</h4>
+            <p>Agents discover what exists via lightweight index files, then fetch only the specific note bodies they need.</p>
+          </div>
+        </div>
+        <aside class="notes">The solution to context rot is not to load less — it is to load selectively. The three-tier architecture enforces this discipline mechanically. Agents cannot accidentally load more than they need.</aside>
+      </section>
+
+      <!-- Sub-slide 5: Memory consolidation -->
+      <section>
+        <h3><i class="fas fa-moon" style="color: var(--accent)"></i> Keeping Memory Sharp</h3>
+        <div class="grid-3" style="margin-top: 20px">
+          <div class="card card-center">
+            <i class="fas fa-arrow-down-to-line"></i>
+            <h4>Consolidate</h4>
+            <p>End-of-task writes move discoveries from context into the vault before the session closes — short-term to long-term.</p>
+          </div>
+          <div class="card card-center">
+            <i class="fas fa-scissors"></i>
+            <h4>Curate</h4>
+            <p>The Librarian scans for stale, contradicted, and unreviewed notes — pruning what no longer holds.</p>
+          </div>
+          <div class="card card-center">
+            <i class="fas fa-user-check"></i>
+            <h4>Confirm</h4>
+            <p>Constraints and decisions require human sign-off before entering trusted memory. Agents cannot self-promote high-stakes facts.</p>
+          </div>
+        </div>
+        <p style="font-size: 0.55em; color: var(--text-muted); margin-top: 15px">Like sleep — the consolidation cycle is what keeps memory sharp over time.</p>
+        <aside class="notes">The sleep analogy is deliberate. Sleep does two things: it consolidates short-term experience into long-term memory, and it prunes connections that are no longer useful. The consolidation cycle here does the same — write at task end (consolidate), Librarian runs hygiene (prune), human confirms high-stakes facts (validate). Without this cycle, memory only grows. It never sharpens.</aside>
+      </section>
+
+      <!-- Sub-slide 4: What we actually need -->
+      <section>
+        <h3>What We Actually Need</h3>
+        <table class="compare-table" style="margin-top: 15px">
+          <thead>
+            <tr><th>Requirement</th><th>Why</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><i class="fas fa-folder-open" style="color: var(--accent)"></i> Out-of-repo storage</td><td>Memory must survive repo deletion and span projects</td></tr>
+            <tr><td><i class="fas fa-atom" style="color: var(--accent)"></i> Atomic short notes</td><td>One fact per note — easier to validate, update, deprecate</td></tr>
+            <tr><td><i class="fas fa-robot" style="color: var(--accent)"></i> Machine-readable metadata</td><td>Agents filter by project, type, confidence without reading everything</td></tr>
+            <tr><td><i class="fas fa-users" style="color: var(--accent)"></i> Human curatable</td><td>You must be able to browse, dispute, and prune in Obsidian</td></tr>
+            <tr><td><i class="fas fa-plug" style="color: var(--accent)"></i> Tool-agnostic</td><td>Any agent framework on the same machine can use the same vault</td></tr>
+          </tbody>
+        </table>
+        <aside class="notes">These requirements come directly from the multi-team, multi-project setup. The last one is critical — we don't want to be locked into a single framework.</aside>
+      </section>
+
+    </section>
+
+
+    <!-- ═══════════════════════════════════════════ -->
+    <!-- TOPIC: The Memory Experiment               -->
+    <!-- ═══════════════════════════════════════════ -->
+    <section>
+
+      <!-- Sub-slide 1: Intro -->
+      <section>
+        <h2><i class="fas fa-flask" style="color: var(--accent)"></i> The Memory Experiment</h2>
+        <p style="font-size: 0.75em">A shared, persistent memory layer — how it works, what we tried, and what was still missing</p>
+        <p><small>Press ↓ for details</small></p>
+      </section>
+
+      <!-- Sub-slide 2: What it is -->
+      <section>
+        <h3><i class="fas fa-database" style="color: var(--accent)"></i> A Shared, Persistent Memory Layer</h3>
+        <p style="font-size: 0.7em; margin-top: 20px">An out-of-repo Obsidian vault that any agent — any framework, any role — can read and write. Knowledge is stored as atomic markdown notes with structured frontmatter. It survives repo deletion, spans projects, and is fully browsable by humans without any special tooling.</p>
+        <div class="grid-3" style="margin-top: 25px">
+          <div class="card card-center">
+            <i class="fas fa-folder-open"></i>
+            <h4>Out-of-repo</h4>
+            <p>Lives outside any single project. Cross-project patterns are first-class citizens.</p>
+          </div>
+          <div class="card card-center">
+            <i class="fas fa-atom"></i>
+            <h4>Atomic notes</h4>
+            <p>One fact per file. Each claim can be verified, updated, or deprecated independently.</p>
+          </div>
+          <div class="card card-center">
+            <i class="fas fa-plug"></i>
+            <h4>Agent-agnostic</h4>
+            <p>Any framework on the same machine can use the same vault. No per-tool configuration.</p>
+          </div>
+        </div>
+        <aside class="notes">The out-of-repo constraint is the most important structural decision. It means the memory is not tied to any project's lifecycle. The atomic note discipline is what makes the vault maintainable as it grows — you can deprecate one fact without touching anything else.</aside>
+      </section>
+
+      <!-- Sub-slide 3: How it works -->
+      <section>
+        <h3><i class="fas fa-arrows-spin" style="color: var(--accent)"></i> Three Moving Parts</h3>
+        <div class="grid-3" style="margin-top: 25px">
+          <div class="card card-center">
+            <i class="fas fa-robot"></i>
+            <h4>Agents write</h4>
+            <p>At the end of every task, agents deposit durable findings into the inbox — before the session closes.</p>
+          </div>
+          <div class="card card-center">
+            <i class="fas fa-moon"></i>
+            <h4>Librarian consolidates</h4>
+            <p>A dedicated agent runs the consolidation cycle — promoting, curating, and flagging what needs human review.</p>
+          </div>
+          <div class="card card-center">
+            <i class="fas fa-user-check"></i>
+            <h4>Humans confirm</h4>
+            <p>Constraints and decisions require sign-off before entering trusted memory. The vault is always browsable in Obsidian.</p>
+          </div>
+        </div>
+        <aside class="notes">The three-part split is deliberate. Agents are fast but unreliable curators — they write everything and let the Librarian sort it out. The Librarian is deterministic where possible and LLM-powered only where judgment is required. Humans are the final authority on high-stakes facts.</aside>
+      </section>
+
+      <!-- Sub-slide 4: Prior art -->
+      <section>
+        <h3><i class="fas fa-code-compare" style="color: var(--accent)"></i> Memory Systems We Built On</h3>
+        <table class="compare-table" style="margin-top: 15px">
+          <thead>
+            <tr><th>System</th><th>What we borrowed</th><th>Discarded because</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Basic Memory</strong></td>
+              <td>Vault format<br>Note structure<br>Wiki-link conventions</td>
+              <td>No consolidation cycle<br>Single-project only</td>
+            </tr>
+            <tr>
+              <td><strong>MemGPT / Letta</strong></td>
+              <td>Memory tier model<br>Core / archival / recall</td>
+              <td>Requires server<br>Framework lock-in<br>Not human-browsable</td>
+            </tr>
+            <tr>
+              <td><strong>Memory Bank (Cline)</strong></td>
+              <td>End-of-task write trigger</td>
+              <td>Monolithic files<br>No consolidation cycle<br>Single-project</td>
+            </tr>
+            <tr>
+              <td><strong>mem0</strong></td>
+              <td>Conflict detection approach</td>
+              <td>Vector DB required<br>Not human-readable<br>Python-only</td>
+            </tr>
+            <tr>
+              <td><strong>Obsidian community</strong></td>
+              <td>Inbox staging<br>Append-only writes</td>
+              <td>Patterns only — no agent runs the cycle</td>
+            </tr>
+          </tbody>
+        </table>
+        <p style="font-size: 0.55em; color: var(--text-muted); margin-top: 10px">
+          Every prior system makes memory <em>possible</em>. The consolidation cycle is what makes it <em>stay sharp</em>.
+        </p>
+        <aside class="notes">
+          <strong>Basic Memory</strong><br />
+          Open-source MCP server (2.9k stars) that gives AI assistants persistent memory through Obsidian-compatible markdown files. The closest thing to what we built, but no governance layer.<br /><br />
+
+          <strong>MemGPT / Letta</strong><br />
+          Research project (now productized) that models agent memory explicitly with core, archival, and recall tiers. Rigorous theoretical model; wrong implementation for our use case.<br /><br />
+
+          <strong>Memory Bank (Cline)</strong><br />
+          A set of 6 structured markdown files at .memory/ that the agent reads at session start and updates after each session. Widely adopted; proves the autonomous write pattern works.<br /><br />
+
+          <strong>mem0</strong><br />
+          Open-source Python library providing a memory layer backed by vector search. Has automatic conflict detection via embedding similarity. Not human-readable without a separate UI.<br /><br />
+
+          <strong>Obsidian community</strong><br />
+          Practitioners using Obsidian as the sole memory store for AI agents, operating purely on the filesystem. Source of the _inbox/ staging area, _contested/ area, and append-only write patterns.<br /><br />
+
+          <strong>The gap</strong><br />
+          Every prior system makes persistent memory <em>possible</em> — agents can write, retrieve, and accumulate knowledge. None of them make it <em>stay sharp</em>. Without a consolidation cycle, memory degrades: stale beliefs accumulate, contradictions go unresolved, and future agents treat outdated facts as current truth. It is the difference between memory that grows and memory that ages gracefully.
+        </aside>
+      </section>
+
+    </section>
+
+
+    <!-- ═══════════════════════════════════════════ -->
+    <!-- TOPIC: Theoretical Foundations             -->
+    <!-- ═══════════════════════════════════════════ -->
+    <section>
+
+      <!-- Sub-slide 1: Intro -->
+      <section>
+        <h2><i class="fas fa-book-open" style="color: var(--accent)"></i> Theoretical Foundations</h2>
+        <p style="font-size: 0.75em">Four ideas from different fields, composed together</p>
+        <p><small>Press ↓ for details</small></p>
+        <div class="grid-2" style="margin-top: 20px">
+          <div class="card card-center">
+            <i class="fas fa-scale-balanced"></i>
+            <h4>Epistemology</h4>
+            <p>Not all knowledge is equal — how you know matters as much as what you know</p>
+          </div>
+          <div class="card card-center">
+            <i class="fas fa-brain"></i>
+            <h4>Cognitive Science</h4>
+            <p>The context window is working memory — load selectively, not exhaustively</p>
+          </div>
+          <div class="card card-center">
+            <i class="fas fa-link"></i>
+            <h4>Zettelkasten</h4>
+            <p>Atomic, linked notes compound faster than long documents</p>
+          </div>
+          <div class="card card-center">
+            <i class="fas fa-clock-rotate-left"></i>
+            <h4>Information Hygiene</h4>
+            <p>Knowledge has a half-life — stale facts are worse than no facts</p>
+          </div>
+        </div>
+        <aside class="notes">None of these four is sufficient alone. The design is the composition of all four. Each one explains a specific mechanism in the system.</aside>
+      </section>
+
+      <!-- Sub-slide 2: Epistemology -->
+      <section>
+        <h3><i class="fas fa-scale-balanced" style="color: var(--accent)"></i> Epistemology — Six Knowledge Types</h3>
+        <table class="compare-table" style="margin-top: 15px">
+          <thead>
+            <tr><th>Type</th><th>What it encodes</th><th>Trust level</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><span class="badge">observation</span></td><td>Something directly read from the codebase</td><td>High — codebase is ground truth</td></tr>
+            <tr><td><span class="badge">pattern</span></td><td>A recurring theme inferred from 2+ observations</td><td>Medium — requires corroboration</td></tr>
+            <tr><td><span class="badge" style="background: rgba(244,67,54,0.4)">constraint</span></td><td>An external rule the system must respect</td><td>High — requires human confirmation</td></tr>
+            <tr><td><span class="badge" style="background: rgba(244,67,54,0.4)">decision</span></td><td>A deliberate choice made by a human</td><td>Authoritative — requires human confirmation</td></tr>
+            <tr><td><span class="badge" style="background: rgba(255,152,0,0.4)">assumption</span></td><td>A belief held without verification</td><td>Low — must be re-verified before acting</td></tr>
+            <tr><td><span class="badge" style="background: rgba(76,175,80,0.4)">synthesis</span></td><td>A Librarian-derived summary across many notes</td><td>Derived — not ground truth</td></tr>
+          </tbody>
+        </table>
+        <p style="font-size: 0.5em; color: var(--text-muted); margin-top: 10px">Epistemic tagging tradition: Gwern.net · LessWrong · Devon Zuegel — governance layer is original</p>
+        <aside class="notes">The governance rules — promotion path, human confirmation requirements — flow directly from these distinctions. The system encodes how you know what you know, not just what you know.
+
+Prior art on epistemic tagging: Gwern.net has used per-note certainty (impossible → certain) and importance tags since the early 2010s — one of the earliest systematic practitioners. The LessWrong community independently developed the "epistemic status: …" header convention around 2015–2018 as a community norm for flagging confidence before posts. Devon Zuegel extended this with both epistemic status and epistemic effort tags on her blog. What agent-memory adds is the governance layer: per-type promotion rules, human confirmation requirements, and TTL — none of which exist in those traditions.</aside>
+      </section>
+
+      <!-- Sub-slide 3: Cognitive science / memory tiers -->
+      <section>
+        <h3><i class="fas fa-brain" style="color: var(--accent)"></i> Cognitive Science — Three Memory Tiers</h3>
+        <p style="font-size: 0.65em; color: var(--text-muted)">Mirrors how human experts actually work — load selectively, not exhaustively</p>
+        <table class="compare-table" style="margin-top: 20px">
+          <thead>
+            <tr><th>Tier</th><th>Contents</th><th>When loaded</th><th>Budget</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Core</strong></td>
+              <td>Writing protocol, constraints summary, recent log tail</td>
+              <td>Every session, unconditionally</td>
+              <td>Under 600 tokens</td>
+            </tr>
+            <tr>
+              <td><strong>Index</strong></td>
+              <td>Navigation files — titles and one-liners, no body content</td>
+              <td>Session start, for current project and domains</td>
+              <td>~300 tokens each</td>
+            </tr>
+            <tr>
+              <td><strong>Archival</strong></td>
+              <td>Full note bodies</td>
+              <td>On demand, when a task requires them</td>
+              <td>10 bodies per query</td>
+            </tr>
+          </tbody>
+        </table>
+        <p style="font-size: 0.55em; color: var(--text-muted); margin-top: 15px">
+          The session starts lean and grows only as needed. Token budgets are sized to leave the majority of the context window free for actual work.
+        </p>
+        <p style="font-size: 0.5em; color: var(--text-muted); margin-top: 5px">Memory tier model: MemGPT / Letta (2023) — token budgets and index tier are original</p>
+        <aside class="notes">This is the critical discipline that prevents context rot. The index is the table of contents — you load it first, then open chapters only when you need them.</aside>
+      </section>
+
+      <!-- Sub-slide 4: Zettelkasten + hygiene -->
+      <section>
+        <h3><i class="fas fa-link" style="color: var(--accent)"></i> Zettelkasten + Information Hygiene</h3>
+        <div class="grid-2" style="margin-top: 20px">
+          <div class="card">
+            <i class="fas fa-atom"></i>
+            <h4>One note, one claim</h4>
+            <p>
+              Long documents under agent writes become 500-line blobs with contradicting claims.
+              You can't deprecate a paragraph. You <em>can</em> deprecate a note.
+              Wiki-links surface relationships; Obsidian makes the graph navigable.
+            </p>
+          </div>
+          <div class="card">
+            <i class="fas fa-hourglass-half"></i>
+            <h4>Knowledge decays</h4>
+            <p>
+              A fact true in April may be false in October. Most memory systems ignore this.
+              Every note carries a <code>review-by</code> date from birth.
+              Deprecation never deletes — it links forward. The audit trail is preserved.
+            </p>
+          </div>
+        </div>
+        <aside class="notes">Luhmann's Zettelkasten (1960s–90s) established that knowledge compounds faster with atomic linked notes. The information hygiene principle is the least glamorous and the most important in practice.</aside>
+      </section>
+
+    </section>
+
+
+    <!-- ═══════════════════════════════════════════ -->
+    <!-- TOPIC: System Design                       -->
+    <!-- ═══════════════════════════════════════════ -->
+    <section>
+
+      <!-- Sub-slide 1: Intro -->
+      <section>
+        <h2><i class="fas fa-sitemap" style="color: var(--accent)"></i> System Design</h2>
+        <p style="font-size: 0.75em">Obsidian vault structure, write protocol, and the Librarian agent</p>
+        <p><small>Press ↓ for details</small></p>
+        <div class="highlight-box">
+          <p>
+            <strong>The tool owns the form. The agent owns the content.</strong><br />
+            <span style="font-size: 0.85em">Anything structural or rule-based lives in deterministic Go tooling. The agent's token budget is reserved for work only an LLM can do.</span>
+          </p>
+        </div>
+        <aside class="notes">This is the single most important factoring rule. Every feature must pass the test: can this be done deterministically? If yes, it goes in a binary, not in an agent prompt.</aside>
+      </section>
+
+      <!-- Sub-slide 2: Vault structure -->
+      <section>
+        <h3><i class="fas fa-folder-tree" style="color: var(--accent)"></i> Obsidian Vault Structure</h3>
+        <table class="compare-table" style="margin-top: 15px">
+          <thead>
+            <tr><th>Directory</th><th>Purpose</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>_meta/</code></td><td>Writing protocol, constraints summary, tag taxonomy, append-only log — written by tools, never by agents</td></tr>
+            <tr><td><code>_inbox/</code></td><td>All agent writes land here first — staging area before promotion</td></tr>
+            <tr><td><code>notes/</code></td><td>All promoted, verified notes — flat structure, classification lives in frontmatter not folders</td></tr>
+            <tr><td><code>notes/_index-*.md</code></td><td>Tool-regenerated navigation indices per project and domain — the Index tier</td></tr>
+          </tbody>
+        </table>
+        <p style="font-size: 0.55em; color: var(--text-muted); margin-top: 12px">
+          Folder structure reflects lifecycle stage only. A note never moves after its first promotion — re-classification is a frontmatter edit, not a rename.
+        </p>
+        <aside class="notes">Folder structure reflects lifecycle stage only — not content type. Classification lives entirely in frontmatter. No rename operations after first promotion.</aside>
+      </section>
+
+      <!-- Sub-slide 3: Note format -->
+      <section>
+        <h3><i class="fas fa-file-lines" style="color: var(--accent)"></i> Note Format</h3>
+        <p style="font-size: 0.6em; color: var(--text-muted)">One claim per note. Structured frontmatter for filtering; free-form markdown for the body.</p>
+        <div class="code-block"><span class="comment">---</span>
+<span class="property">title</span>: <span class="string">"auth middleware runs before cors in server.go"</span>
+<span class="property">type</span>:       <span class="keyword">observation</span>
+<span class="property">status</span>:     <span class="keyword">inbox</span>
+<span class="property">tags</span>:      [<span class="string">auth</span>, <span class="string">middleware</span>, <span class="string">golang</span>]
+<span class="property">project</span>:    <span class="string">my-api</span>
+<span class="property">source-artifact</span>: <span class="string">internal/server/server.go</span>
+<span class="comment">---</span>
+
+<span class="comment"># One short paragraph. One claim.</span>
+
+<span class="comment">## Evidence  — where this was observed</span>
+<span class="comment">## Implications  — what other agents need to know</span>
+<span class="comment">## Related  — [[wiki-links]] to connected notes</span></div>
+        <aside class="notes">The agent never writes raw frontmatter. The write-note tool assembles it. The agent supplies the claim body, evidence, epistemic type, and confidence level — nothing else. Confidence is an explicit agent judgment: low, medium, or high. It defaults to medium if omitted. Wiki-links in the Related section must resolve to existing notes or promotion is blocked.</aside>
+      </section>
+
+      <!-- Sub-slide 3b: Static tooling principle -->
+      <section>
+        <h3><i class="fas fa-wrench" style="color: var(--accent)"></i> The Tool Owns the Form</h3>
+        <p style="font-size: 0.65em; color: var(--text-muted); margin-top: 5px">Keep agent token budget for work only an LLM can do</p>
+        <div class="grid-2" style="margin-top: 20px">
+          <div class="card">
+            <h4><i class="fas fa-robot" style="color: var(--accent)"></i> Agent owns the content</h4>
+            <ul style="font-size: 0.65em; margin-top: 10px">
+              <li>Composing the claim — the body text</li>
+              <li>Picking the type when ambiguous</li>
+              <li>Assessing evidence quality and confidence</li>
+              <li>Deciding if two notes are the same claim</li>
+              <li>Drafting synthesis prose</li>
+            </ul>
+          </div>
+          <div class="card">
+            <h4><i class="fas fa-terminal" style="color: var(--accent)"></i> Tool owns the form</h4>
+            <ul style="font-size: 0.65em; margin-top: 10px">
+              <li>Frontmatter assembly</li>
+              <li>Staleness scanning</li>
+              <li>Index regeneration</li>
+              <li>Inbox promotion</li>
+              <li>Search-before-write deduplication</li>
+            </ul>
+          </div>
+        </div>
+        <p style="font-size: 0.55em; color: var(--text-muted); margin-top: 15px"><em>Can this be done deterministically? If yes — it goes in the binary, not the prompt.</em></p>
+        <aside class="notes">This principle is a key design decision in the system. LLM token budget is expensive and unreliable for mechanical tasks. Deterministic tooling is cheap, fast, and auditable. The split keeps agents focused on judgment and keeps the system predictable. The Go CLI (agent-memory) is the tooling layer — it runs as subcommands with JSON output, invoked by agents as tool calls or by the host outside any session.</aside>
+      </section>
+
+      <!-- Sub-slide 4: Write protocol -->
+      <section>
+        <h3><i class="fas fa-pen-to-square" style="color: var(--accent)"></i> Write Protocol</h3>
+        <p style="font-size: 0.6em; color: var(--text-muted)">What the agent does vs. what the tool does</p>
+        <div class="grid-2" style="margin-top: 15px">
+          <div class="card">
+            <i class="fas fa-robot"></i>
+            <h4>Agent's responsibility</h4>
+            <p>
+              Choose the epistemic type. Write the claim body and evidence.
+              Declare the source artifact. Indicate whether this is a new claim,
+              an update to an existing note, or a contradiction of one.
+              That is all.
+            </p>
+          </div>
+          <div class="card">
+            <i class="fas fa-gears"></i>
+            <h4>Tool's responsibility</h4>
+            <p>
+              Check for similar existing notes before writing.
+              Assemble all frontmatter fields. Assign the staleness date.
+              Run lint checks. Flag constraints and decisions for human review.
+              Write to the inbox. Append to the log.
+              <strong>The agent never writes raw frontmatter.</strong>
+            </p>
+          </div>
+        </div>
+        <aside class="notes">The similarity check is the key safety mechanism. If a similar note already exists and the agent hasn't made an explicit choice about it, the write is refused and the candidates are returned. The agent must decide: same claim, update, or genuine contradiction.</aside>
+      </section>
+
+      <!-- Sub-slide 5: The Librarian -->
+      <section>
+        <h3><i class="fas fa-user-tie" style="color: var(--accent)"></i> The Librarian Agent</h3>
+        <p style="font-size: 0.6em; color: var(--text-muted)">The only role this design defines</p>
+        <div class="workflow" style="margin-top: 20px">
+          <div class="workflow-step">
+            <i class="fas fa-pen"></i>
+            <span>Agent writes<br /><small>→ _inbox/</small></span>
+          </div>
+          <span class="workflow-arrow">→</span>
+          <div class="workflow-step" style="border-color: var(--accent)">
+            <i class="fas fa-user-tie"></i>
+            <span>Librarian<br /><small>validates</small></span>
+          </div>
+          <span class="workflow-arrow">→</span>
+          <div class="workflow-step">
+            <i class="fas fa-check-circle"></i>
+            <span>Promote<br /><small>→ notes/</small></span>
+          </div>
+          <span class="workflow-arrow">→</span>
+          <div class="workflow-step">
+            <i class="fas fa-person-chalkboard"></i>
+            <span>Human confirms<br /><small>constraint/decision</small></span>
+          </div>
+        </div>
+        <p style="font-size: 0.55em; color: var(--text-muted); margin-top: 15px">
+          Triggered mid-workflow via <code>memory-write</code> tool, or automatically on session idle via the OpenCode plugin.
+          Runs as a <strong>subagent</strong> — isolates memory-handling context from the calling agent's window.
+        </p>
+        <aside class="notes">The Librarian handles: validation, promotion, deduplication, assumption outdating, human confirmation for constraints/decisions, tagging, pattern detection, and synthesis. It's a leaf subagent — stateless, task-in/output-out.</aside>
+      </section>
+
+    </section>
+
+
+    <!-- ═══════════════════════════════════════════ -->
+    <!-- TOPIC: Knowledge Hygiene                   -->
+    <!-- ═══════════════════════════════════════════ -->
+    <section>
+
+      <!-- Sub-slide 1: Intro -->
+      <section>
+        <h2><i class="fas fa-shield-halved" style="color: var(--accent)"></i> Knowledge Hygiene</h2>
+        <p style="font-size: 0.75em">The hard part — defending against six specific failure modes</p>
+        <p><small>Press ↓ for details</small></p>
+        <div class="highlight-box">
+          <p>
+            Most agent memory systems fail here. They write facts and never revisit them.
+            The Obsidian vault gradually fills with <strong>outdated beliefs</strong> that future agents treat as current truth.
+          </p>
+        </div>
+        <aside class="notes">Knowledge poisoning compounds silently. By the time you notice, agents have been making decisions based on stale or wrong information for weeks.</aside>
+      </section>
+
+      <!-- Sub-slide 2: Stale facts -->
+      <section>
+        <h3><i class="fas fa-clock" style="color: var(--accent)"></i> Stale Facts</h3>
+        <p style="font-size: 0.7em; color: var(--text-muted); margin-top: 10px">Something that was true in April is still in memory in October</p>
+        <div class="highlight-box" style="margin-top: 25px">
+          <p><strong>Control:</strong> Every note carries a <code>review-by</code> date. A staleness scan at session start flags notes past their TTL before any work begins.</p>
+        </div>
+      </section>
+
+      <!-- Sub-slide 3: Assumption poisoning -->
+      <section>
+        <h3><i class="fas fa-question-circle" style="color: var(--accent)"></i> Assumption Poisoning</h3>
+        <p style="font-size: 0.7em; color: var(--text-muted); margin-top: 10px">An agent writes a guess as a fact — future agents treat it as ground truth</p>
+        <div class="highlight-box" style="margin-top: 25px">
+          <p><strong>Control:</strong> <code>type: assumption</code> is mandatory for unverified beliefs. Assumptions carry a 30-day TTL and must be re-verified before acting on them.</p>
+        </div>
+      </section>
+
+      <!-- Sub-slide 4: Conflicting writes -->
+      <section>
+        <h3><i class="fas fa-code-branch" style="color: var(--accent)"></i> Conflicting Writes</h3>
+        <p style="font-size: 0.7em; color: var(--text-muted); margin-top: 10px">Two agents write opposite conclusions — later agents pick whichever they find first</p>
+        <div class="highlight-box" style="margin-top: 25px">
+          <p><strong>Control:</strong> Search-before-write — the tool checks for similar existing notes before accepting a new one. Near-duplicates are flagged rather than silently added.</p>
+        </div>
+        <aside class="notes">Similarity is measured using Levenshtein distance on normalised note titles. Levenshtein distance counts the minimum number of single-character edits (insertions, deletions, substitutions) needed to turn one string into another — so "auth middleware order" and "auth middleware ordering" score as near-identical. Notes above the similarity threshold are surfaced to the agent before the write proceeds, so it can decide whether to update the existing note or add a genuinely distinct one.</aside>
+      </section>
+
+      <!-- Sub-slide 5: Hallucination laundering -->
+      <section>
+        <h3><i class="fas fa-ghost" style="color: var(--accent)"></i> Hallucination Laundering</h3>
+        <p style="font-size: 0.7em; color: var(--text-muted); margin-top: 10px">An agent writes something it hallucinated — it gets retrieved as verified knowledge in future sessions</p>
+        <div class="highlight-box" style="margin-top: 25px">
+          <p><strong>Control:</strong> All writes land in <code>_inbox/</code> first. Constraints and decisions require explicit human confirmation before entering trusted memory.</p>
+        </div>
+        <aside class="notes">Human confirmation is only required for constraint and decision notes — the two types where a wrong memory can silently shape agent behavior for months. For observations, the codebase is the ground truth: wrong memories fail fast.</aside>
+      </section>
+
+      <!-- Sub-slide 6: Citation collapse -->
+      <section>
+        <h3><i class="fas fa-unlink" style="color: var(--accent)"></i> Citation Collapse</h3>
+        <p style="font-size: 0.7em; color: var(--text-muted); margin-top: 10px">A note loses track of where the claim came from — it becomes impossible to verify</p>
+        <div class="highlight-box" style="margin-top: 25px">
+          <p><strong>Control:</strong> <code>source-agent</code> and <code>source-artifact</code> are mandatory fields. A note without a traceable origin cannot be promoted.</p>
+        </div>
+      </section>
+
+      <!-- Sub-slide 7: Silent deprecation -->
+      <section>
+        <h3><i class="fas fa-trash" style="color: var(--accent)"></i> Silent Deprecation</h3>
+        <p style="font-size: 0.7em; color: var(--text-muted); margin-top: 10px">A note is deleted or overwritten — the history of what was believed and when is lost</p>
+        <div class="highlight-box" style="margin-top: 25px">
+          <p><strong>Control:</strong> Notes are never deleted. Superseded notes are deprecated with a forward link to the replacement — the audit trail is permanent.</p>
+        </div>
+      </section>
+
+    </section>
+
+
+    <!-- ═══════════════════════════════════════════ -->
+    <!-- TOPIC: The Tooling                         -->
+    <!-- ═══════════════════════════════════════════ -->
+    <section>
+
+      <!-- Sub-slide 1: Intro -->
+      <section>
+        <h2><i class="fas fa-terminal" style="color: var(--accent)"></i> The Tooling</h2>
+        <p style="font-size: 0.75em">A single Go binary — <code>agent-memory</code> — with subcommands</p>
+        <p><small>Press ↓ for details</small></p>
+        <div class="grid-3" style="margin-top: 20px">
+          <div class="card card-center">
+            <i class="fas fa-robot" style="font-size: 1.6em; display: block; margin-bottom: 8px"></i>
+            <h4>Agent-facing</h4>
+            <p><code>context</code>, <code>write-note</code>, <code>search</code> — the entire normal-operation surface</p>
+          </div>
+          <div class="card card-center">
+            <i class="fas fa-wrench" style="font-size: 1.6em; display: block; margin-bottom: 8px"></i>
+            <h4>Maintenance</h4>
+            <p><code>promote</code>, <code>reindex</code>, <code>tag</code>, <code>synthesize</code>, <code>curate</code></p>
+          </div>
+          <div class="card card-center">
+            <i class="fas fa-magnifying-glass" style="font-size: 1.6em; display: block; margin-bottom: 8px"></i>
+            <h4>Lint</h4>
+            <p><code>lint-note</code>, <code>lint-vault</code>, <code>backup</code> — integrity gates</p>
+          </div>
+        </div>
+        <aside class="notes">All subcommands support --json for machine-readable output. The agent-facing trio is the entire CLI interface a normal agent needs. The OpenCode plugin wraps these in registered tools so agents never need bash permissions.</aside>
+      </section>
+
+      <!-- Sub-slide 2: Session lifecycle -->
+      <section>
+        <h3><i class="fas fa-rotate" style="color: var(--accent)"></i> Session Lifecycle</h3>
+        <div class="workflow" style="margin-top: 25px">
+          <div class="workflow-step">
+            <i class="fas fa-play"></i>
+            <span>Session start<br /><small><code>agent-memory context</code></small></span>
+          </div>
+          <span class="workflow-arrow">→</span>
+          <div class="workflow-step">
+            <i class="fas fa-hammer"></i>
+            <span>Work<br /><small>Search index directly<br /><code>agent-memory write-note</code></small></span>
+          </div>
+          <span class="workflow-arrow">→</span>
+          <div class="workflow-step" style="border-color: var(--accent)">
+            <i class="fas fa-user-tie"></i>
+            <span>Session idle<br /><small>Librarian<br />promotion pass</small></span>
+          </div>
+          <span class="workflow-arrow">→</span>
+          <div class="workflow-step">
+            <i class="fas fa-check-double"></i>
+            <span>Obsidian vault clean<br /><small>notes/ updated</small></span>
+          </div>
+        </div>
+        <p style="font-size: 0.55em; color: var(--text-muted); margin-top: 15px">
+          The OpenCode plugin handles context injection, tool registration, and automatic promotion on <code>session.idle</code> — no agent definition changes required.
+        </p>
+        <aside class="notes">During work, agents search directly — reading the index files loaded at session start to discover what exists, then fetching specific note bodies as needed. There is no search command yet; the index is the navigation layer. The session-idle trigger is model-independent — promotion happens automatically without any agent needing to remember to call it.</aside>
+      </section>
+
+
+    </section>
+
+
+    <!-- PATTERN: Q&A -->
+    <section>
+      <div class="qa-icon"><i class="fas fa-comments"></i></div>
+      <h1>Q &amp; A</h1>
+      <p style="font-size: 0.8em; color: var(--text-muted)">Questions?</p>
+      <br />
+      <p style="font-size: 0.6em">
+        <i class="fab fa-github" style="color: var(--accent)"></i>
+        github.com/michaelin/agent-memory
+      </p>
+      <aside class="notes">Thank the audience and open the floor.</aside>
+    </section>
+
+    <!-- PATTERN: Eficode Closing Slide -->
+    <section>
+      <div class="closing-slide-layout">
+        <div class="closing-slide-left">
+          <h1 class="closing-thank-you">Thank you</h1>
+          <ul class="contact-list">
+            <li><i class="fab fa-linkedin"></i> linkedin.com/company/eficode</li>
+            <li><i class="fab fa-x-twitter"></i> twitter.com/eficode</li>
+            <li><i class="fab fa-github"></i> github.com/michaelin/agent-memory</li>
+          </ul>
+          <div class="closing-cta">More info? Go visit <strong>www.eficode.com</strong></div>
+        </div>
+        <div class="closing-slide-right">
+          <img src="assets/eficode-logo.png" alt="Eficode" class="closing-eficode-logo" />
+          <img src="assets/closing-illustration.png" alt="" class="title-illustration" />
+        </div>
+      </div>
+      <aside class="notes">Closing. Point people to the repo.</aside>
+    </section>
+
+  </div><!-- /.slides -->
+</div><!-- /.reveal -->
+
+<!-- Theme toggle button -->
+<button class="theme-toggle" id="themeToggle" title="Toggle light/dark (T)">
+  <i class="fas fa-moon"></i>
+</button>
+
+<!-- Reveal.js -->
+<script src="https://cdn.jsdelivr.net/npm/reveal.js@5.2.1/dist/reveal.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/reveal.js@5.2.1/plugin/notes/notes.js"></script>
+
+<script>
+  const darkSheet  = document.getElementById('theme-dark');
+  const lightSheet = document.getElementById('theme-light');
+  const toggleBtn  = document.getElementById('themeToggle');
+  let isDark = false;
+
+  function setTheme(dark) {
+    isDark = dark;
+    darkSheet.disabled  = !dark;
+    lightSheet.disabled =  dark;
+    document.documentElement.classList.toggle('light-mode', !dark);
+    toggleBtn.innerHTML = dark
+      ? '<i class="fas fa-sun"></i>'
+      : '<i class="fas fa-moon"></i>';
+  }
+
+  setTheme(false);
+  toggleBtn.addEventListener('click', () => setTheme(!isDark));
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 't' || e.key === 'T') setTheme(!isDark);
+  });
+
+  Reveal.initialize({
+    hash: true,
+    transition: 'slide',
+    controls: true,
+    progress: true,
+    center: true,
+    slideNumber: true,
+    keyboard: true,
+    overview: true,
+    touch: true,
+    loop: false,
+    fragments: true,
+    plugins: [RevealNotes],
+  });
+</script>
+</body>
+</html>
